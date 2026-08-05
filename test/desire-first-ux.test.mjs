@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadConfig } from "../dist/config.js";
 import { startApp } from "../dist/app.js";
-import { autoApproveArgsFor, composeRoomCommand, supportsAutoApprove } from "../dist/agents.js";
+import { autoApproveArgsFor, composeRoomCommand, forceCodexDeviceAuthLogin, supportsAutoApprove } from "../dist/agents.js";
 import { applyCreatedProject } from "../dist/project.js";
 import { initialRoomImage, RECOMMENDED_ROOM_IMAGE, SAFE_BASE_ROOM_IMAGE } from "../dist/room/setup.js";
 import { ContextSchema } from "../dist/types.js";
@@ -89,6 +89,16 @@ test("composeRoomCommand applies flags only when asked and never fights the user
     composeRoomCommand({ agentId: "claude", roomCommand: ["claude"], autoApprove: true, agentArgs: ["--dangerously-skip-permissions"] }),
     ["claude", "--dangerously-skip-permissions"],
   );
+});
+
+test("an unsigned-in Codex can show help/version without being hijacked by device auth", () => {
+  assert.equal(forceCodexDeviceAuthLogin("codex", false), true);
+  assert.equal(forceCodexDeviceAuthLogin("codex", false, ["exec", "hello"]), true);
+  for (const flag of ["--help", "-h", "--version", "-V"]) {
+    assert.equal(forceCodexDeviceAuthLogin("codex", false, [flag]), false, flag);
+  }
+  assert.equal(forceCodexDeviceAuthLogin("codex", true, []), false);
+  assert.equal(forceCodexDeviceAuthLogin("claude", false, []), false);
 });
 
 test("autoApprove is opt-in in the schema and on for folder-created Projects", () => {

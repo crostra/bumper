@@ -11,7 +11,7 @@ Protected launches run inside an Apple container Sandbox. A Project explicitly c
 - **Provider access:** short-lived, repository-scoped GitHub App tokens for bound repositories.
 - **Brokered integrations:** MCP Connections whose credentials stay outside the Sandbox.
 
-`bumper prove` runs a real Sandbox and tests the observed boundary. A Project proof evaluates the Project's declared folders, network, and Git identity; `bumper prove --sealed` uses a disposable Sandbox with no user folders.
+`bumper prove` runs a real Sandbox and tests the observed boundary. A Project proof evaluates the Project's declared folders, network, and Git identity; `bumper prove --sealed` uses a disposable Sandbox with no user folders. Add `--json` to produce machine-readable evidence.
 
 ## Important limits
 
@@ -24,6 +24,6 @@ Protected launches run inside an Apple container Sandbox. A Project explicitly c
 
 ## Data handling
 
-Bumper stores its local configuration and event record on the user's Mac. It does not send telemetry without an explicit user action. Event retention can be changed or disabled with `bumper prefs`; `bumper log --export` exports the current local record.
+Bumper stores its local configuration and event record on the user's Mac. It does not send telemetry without an explicit user action. Event retention can be changed or disabled with `bumper prefs`; `bumper log --export` exports the current local record. `bumper support` generates redacted diagnostics locally and prints them to standard output; it does not upload them.
 
 For a deeper implementation overview, see [ARCHITECTURE.md](ARCHITECTURE.md). To report a vulnerability privately, follow the project-level [security policy](../SECURITY.md).

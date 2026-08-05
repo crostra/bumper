@@ -72,6 +72,8 @@ import {
   loadLaunchGate,
   type LaunchGateResult,
 } from "./launch-gate-node.js";
+import { networkLabel, networkSentence, type EgressMode } from "./operations/network.js";
+import { containerSystemStatus, type ContainerSystemState } from "./operations/container-system.js";
 
 /** CLI tokens → AgentId (roomCommand mapping). Host detection is irrelevant. */
 export const CLI_AGENT_ALIASES: Record<string, AgentId> = {
@@ -140,6 +142,16 @@ export function parseProjectFlag(argv: string[]): {
   return { projectFlag, accountFlag, rest };
 }
 
+/** Parse the flags owned by `bumper <cli>` exactly once so neither is lost. */
+export function parseRoomAgentInvocation(argv: string[]): {
+  projectFlag?: string;
+  accountFlag?: string;
+  agentArgs: string[];
+} {
+  const { projectFlag, accountFlag, rest } = parseProjectFlag(argv);
+  return { projectFlag, accountFlag, agentArgs: rest };
+}
+
 /** Workspace for Room mount: project.workspace if set, else cwd when it exists. */
 export function resolveLaunchWorkspace(context: Context, cwd: string): string {
   const fromProject = context.workspace?.trim();
@@ -153,6 +165,16 @@ export interface ImageProbeResult {
   status: ImageProbeStatus;
   detail: string;
   skippedPreflight: boolean;
+}
+
+/**
+ * Executable discovery never needs Internet access. In particular, an
+ * allowlist Project does not have its host-only network until launch setup;
+ * passing that unfinished egress spec to `container run` makes a healthy CLI
+ * look missing. Keep the same image and doors, but seal this one-shot probe.
+ */
+export function executablePreflightSpec(spec: RoomSpec): RoomSpec {
+  return { ...spec, egress: { mode: "blocked" } };
 }
 
 /**
@@ -218,7 +240,7 @@ export async function probeRoomImageForAgent(opts: {
     result = await opts.runPreflight(preflight.command);
   } else {
     const backend = new AppleContainerBackend();
-    result = await backend.run(launchSpec, preflight.command);
+    result = await backend.run(executablePreflightSpec(launchSpec), preflight.command);
   }
 
   if (result.exitCode === 0) {
@@ -422,10 +444,18 @@ export interface ProjectStatusSnapshot {
   image: string;
   imageKind: string;
   imageLabel: string;
+  imageStatus: "ready" | "missing" | "stale" | "setup" | "custom" | "not-checked";
   egress: string;
   workspace: string;
   accessRoots: { path: string; role: string; access?: string }[];
-  container: { usable: boolean; detail: string };
+  container: {
+    /** The CLI is installed and meets the supported version floor. */
+    usable: boolean;
+    detail: string;
+    /** Kept separate: an installed CLI is not the same as a running service. */
+    systemState: ContainerSystemState | "not-checked";
+    systemDetail: string;
+  };
   tools: { id: AgentId; alias: string; roomCommand: string; mapped: boolean; authPersisted: boolean; profileId: string }[];
   note?: string;
 }
@@ -438,6 +468,9 @@ export async function buildProjectStatusSnapshot(opts: {
   macOS?: boolean;
   roomAvailable?: boolean;
   roomAvailableDetail?: string;
+  /** Injected by tests; live status performs this read-only probe itself. */
+  containerSystemState?: ContainerSystemState;
+  containerSystemDetail?: string;
 }): Promise<ProjectStatusSnapshot> {
   const project = opts.config.contexts[opts.projectName];
   if (!project) throw new Error(`Unknown project: ${opts.projectName}`);
@@ -447,13 +480,29 @@ export async function buildProjectStatusSnapshot(opts: {
   const sourceInfo = describeImageSource(image);
   const roots = projectAccessRoots(project);
 
-  let container = { usable: false, detail: "not checked" };
+  let container: ProjectStatusSnapshot["container"] = {
+    usable: false,
+    detail: "not checked",
+    systemState: "not-checked",
+    systemDetail: "not checked",
+  };
   if (opts.roomAvailable !== undefined) {
-    container = { usable: opts.roomAvailable, detail: opts.roomAvailableDetail || "" };
+    container = {
+      usable: opts.roomAvailable,
+      detail: opts.roomAvailableDetail || "",
+      systemState: opts.containerSystemState ?? "not-checked",
+      systemDetail: opts.containerSystemDetail || "not checked",
+    };
   } else {
     const backend = new AppleContainerBackend();
     const availability = await backend.check();
-    container = { usable: availability.usable, detail: availability.detail };
+    const system = availability.usable ? containerSystemStatus() : undefined;
+    container = {
+      usable: availability.usable,
+      detail: availability.detail,
+      systemState: system?.state ?? "unavailable",
+      systemDetail: system?.detail ?? availability.detail,
+    };
   }
 
   const order: AgentId[] = ["claude", "codex", "cursor", "antigravity", "grok"];
@@ -471,15 +520,22 @@ export async function buildProjectStatusSnapshot(opts: {
   });
 
   let note: string | undefined;
+  let imageStatus: ProjectStatusSnapshot["imageStatus"] = sourceInfo.kind === "base" ? "setup" : "custom";
   if (sourceInfo.kind === "base") {
     note = "Safe base image has no AI CLIs by design. Build: bumper room-image build [-p project]";
   } else if (sourceInfo.kind === "recommended" || image === RECOMMENDED_ROOM_IMAGE) {
     // Hermetic tests inject roomAvailable; skip live `container image inspect` there.
-    const liveProbe = opts.macOS !== false && opts.roomAvailable === undefined;
+    const liveProbe = opts.macOS !== false
+      && opts.roomAvailable === undefined
+      && container.systemState === "running";
     if (!liveProbe) {
-      note = `Recommended image ${image}. If auth mounts hide CLIs, rebuild: bumper room-image build --force (${RECOMMENDED_ROOM_RECIPE}).`;
+      imageStatus = "not-checked";
+      note = container.systemState === "stopped"
+        ? "Sandbox image was not checked because Apple container services are stopped."
+        : `Recommended image ${image}. If auth mounts hide CLIs, rebuild: bumper room-image build --force (${RECOMMENDED_ROOM_RECIPE}).`;
     } else {
       const recipe = inspectRecommendedRoomRecipe(image);
+      imageStatus = !recipe.present ? "missing" : recipe.stale ? "stale" : "ready";
       note = recipe.detail;
     }
   }
@@ -492,6 +548,7 @@ export async function buildProjectStatusSnapshot(opts: {
     image,
     imageKind: sourceInfo.kind,
     imageLabel: sourceInfo.label,
+    imageStatus,
     egress: project.room?.egress || "blocked",
     workspace: workspace || "(unset)",
     accessRoots: roots.map((r) => ({ path: r.path, role: r.role, access: r.access })),
@@ -503,12 +560,22 @@ export async function buildProjectStatusSnapshot(opts: {
 
 export function formatProjectStatus(snapshot: ProjectStatusSnapshot): string {
   const lines: string[] = [];
+  const egress = snapshot.egress as EgressMode;
   lines.push(`Project: ${snapshot.projectName}  (resolved via ${snapshot.source})`);
-  lines.push(`Mode: ${snapshot.mode}  ·  Room: ${snapshot.roomEnabled ? "enabled" : "disabled"}  ·  Egress: ${snapshot.egress}`);
+  lines.push(`Mode: ${snapshot.mode}  ·  Sandbox: ${snapshot.roomEnabled ? "enabled" : "disabled"}`);
+  lines.push(`Network: ${networkLabel(egress)} — ${networkSentence(egress)}`);
+  if (egress === "open") {
+    lines.push(`  Unrestricted internet. Narrow it: bumper network off -p "${snapshot.projectName}"`);
+    lines.push(`  Or allow selected sites: bumper network allowed --template <id> -p "${snapshot.projectName}"`);
+  }
   lines.push(`Workspace: ${snapshot.workspace}`);
   lines.push(`Image: ${snapshot.image}`);
-  lines.push(`  ${snapshot.imageLabel} [${snapshot.imageKind}]`);
-  lines.push(`Container: ${snapshot.container.usable ? "available" : "unavailable"} — ${snapshot.container.detail}`);
+  lines.push(`  ${snapshot.imageLabel} [${snapshot.imageKind}; ${snapshot.imageStatus}]`);
+  lines.push(`Container CLI: ${snapshot.container.usable ? "installed" : "unavailable"} — ${snapshot.container.detail}`);
+  const service = snapshot.container.systemState === "not-checked"
+    ? "not checked"
+    : snapshot.container.systemState;
+  lines.push(`Container service: ${service} — ${snapshot.container.systemDetail}`);
   lines.push("");
   lines.push("Access roots:");
   if (snapshot.accessRoots.length === 0) {
@@ -537,6 +604,135 @@ export function formatProjectStatus(snapshot: ProjectStatusSnapshot): string {
   lines.push("");
   lines.push("No session started. Launch: bumper [-p project] <cli>");
   lines.push(`  CLIs: ${listCliAgentAliases().join(", ")}`);
+  return lines.join("\n");
+}
+
+export interface ProjectStatusSession {
+  id: string;
+  agentName: string;
+}
+
+export interface ProjectStatusAudit {
+  blocked: number;
+  allowed: number;
+}
+
+export interface ProjectStatusIssue {
+  message: string;
+  command: string;
+}
+
+/**
+ * Honest fast-path verdict for `bumper status`.
+ * "Configured" deliberately does not mean launch-ready: only doctor runs the
+ * image/tool probes needed to make that stronger claim.
+ */
+export function projectStatusIssues(snapshot: ProjectStatusSnapshot): ProjectStatusIssue[] {
+  const project = snapshot.projectName.replaceAll('"', '\\"');
+  const issues: ProjectStatusIssue[] = [];
+  if (!snapshot.roomEnabled) {
+    issues.push({
+      message: "Sandbox is disabled for this Project.",
+      command: "bumper app   # Projects → Settings → enable Sandbox",
+    });
+  }
+  if (snapshot.accessRoots.length === 0) {
+    issues.push({
+      message: "No Access folder is set, so this Project cannot be selected from a folder. Bumper does not invent a home-wide door.",
+      command: `bumper access set -p "${project}"`,
+    });
+  }
+  if (!snapshot.container.usable) {
+    issues.push({
+      message: "Apple container is unavailable.",
+      command: `bumper doctor -p "${project}"`,
+    });
+  } else if (snapshot.container.systemState === "stopped") {
+    issues.push({
+      message: "Apple container services are stopped.",
+      command: "container system start",
+    });
+  } else if (snapshot.container.systemState === "unavailable") {
+    issues.push({
+      message: "Apple container service state could not be read.",
+      command: `bumper doctor -p "${project}"`,
+    });
+  }
+  if (snapshot.imageKind === "base") {
+    issues.push({
+      message: "The safe base image contains no AI CLIs.",
+      command: `bumper room-image build -p "${project}"`,
+    });
+  } else if (snapshot.imageStatus === "missing") {
+    issues.push({
+      message: "The recommended Sandbox image is not built.",
+      command: `bumper room-image build -p "${project}"`,
+    });
+  } else if (snapshot.imageStatus === "stale") {
+    issues.push({
+      message: "The recommended Sandbox image is out of date.",
+      command: `bumper room-image build --force -p "${project}"`,
+    });
+  }
+  return issues;
+}
+
+/** A scan-first status: verdict and current activity before implementation detail. */
+export function formatProjectStatusSummary(
+  snapshot: ProjectStatusSnapshot,
+  sessions: ProjectStatusSession[] = [],
+  audit?: ProjectStatusAudit,
+): string {
+  const issues = projectStatusIssues(snapshot);
+  const lines: string[] = [];
+  const egress = snapshot.egress as EgressMode;
+  const readOnly = snapshot.accessRoots.filter((root) => root.access === "read-only").length;
+  const writable = snapshot.accessRoots.length - readOnly;
+  const savedAccounts = snapshot.tools.filter((tool) => tool.authPersisted).length;
+
+  lines.push(`Bumper status — ${issues.length ? "needs attention" : "configured"}`);
+  lines.push(`Project: ${snapshot.projectName}  (via ${snapshot.source})`);
+  lines.push(
+    sessions.length
+      ? `Sessions: ${sessions.length} running — ${sessions.map((session) => `${session.agentName} (${session.id.slice(0, 8)})`).join(", ")}`
+      : "Sessions: none running",
+  );
+  lines.push("");
+  lines.push("Boundary");
+  lines.push(`  Folders: ${snapshot.accessRoots.length} shared · ${writable} writable · ${readOnly} read-only`);
+  lines.push(`  Network: ${networkLabel(egress)} — ${networkSentence(egress)}${egress === "open" ? " (unrestricted)" : ""}`);
+  lines.push("");
+  lines.push("Runtime");
+  lines.push(`  Container CLI: ${snapshot.container.usable ? "installed" : "unavailable"}`);
+  const service = snapshot.container.systemState === "not-checked" ? "not checked" : snapshot.container.systemState;
+  lines.push(`  Container service: ${service}`);
+  lines.push(`  Sandbox image: ${snapshot.imageLabel} · ${snapshot.imageStatus}`);
+  lines.push(`  Saved AI logins: ${savedAccounts}/${snapshot.tools.length}`);
+  if (audit) {
+    lines.push(`  Today: ${audit.blocked} blocked · ${audit.allowed} allowed`);
+  }
+  lines.push("");
+  if (issues.length) {
+    lines.push(`Needs attention (${issues.length})`);
+    for (const issue of issues) lines.push(`  ! ${issue.message}`);
+    lines.push("");
+    lines.push("Next");
+    for (const issue of issues) lines.push(`  ${issue.command}`);
+  } else {
+    const project = snapshot.projectName.replaceAll('"', '\\"');
+    lines.push("Next");
+    lines.push(`  bumper doctor -p "${project}"   # verify launch readiness`);
+    lines.push(`  bumper -p "${project}" claude   # start a protected Session`);
+  }
+  if (egress === "open") {
+    const project = snapshot.projectName.replaceAll('"', '\\"');
+    lines.push("");
+    lines.push("Review (Network is unrestricted)");
+    lines.push(`  bumper network allowed --template <id> -p "${project}"`);
+    lines.push(`  bumper network off -p "${project}"`);
+  }
+  lines.push("");
+  lines.push("More: bumper status --verbose · bumper status --json · bumper help status");
   return lines.join("\n");
 }
 
@@ -737,6 +933,7 @@ export async function runCliRoomAgent(opts: RunCliRoomOptions): Promise<RunCliRo
   const forceDeviceAuthLogin = forceCodexDeviceAuthLogin(
     opts.agentId,
     roomAuthCredentialPresent(opts.agentId as AgentId, profileId),
+    opts.agentArgs,
   );
   // Device-auth login is not a coding session — never attach auto-approve flags.
   const autoApprove =
@@ -754,7 +951,7 @@ export async function runCliRoomAgent(opts: RunCliRoomOptions): Promise<RunCliRo
   // bridge run in this image?" instead of costing a second container start.
   const wantsMcp = Object.keys(assessment.context.mcpBindings ?? {}).length > 0;
   const preflight = roomExecutablePreflight(assessment.roomCommand, { requireNode: wantsMcp });
-  const preflightResult = await backend.run(launchSpec, preflight.command);
+  const preflightResult = await backend.run(executablePreflightSpec(launchSpec), preflight.command);
   const mcpRuntimeAvailable = preflightResult.exitCode !== ROOM_MCP_RUNTIME_MISSING_EXIT;
   if (preflightResult.exitCode !== 0 && mcpRuntimeAvailable) {
     const reason = roomPreflightFailureDetail(

@@ -320,7 +320,7 @@ test("the lifecycle commands work from a terminal", () => {
     assert.match(feedback.stdout, /github\.com\/crostra\/bumper\/discussions/);
     assert.match(feedback.stdout, /Bumper sends nothing on its own/);
 
-    const help = spawnSync(process.execPath, [CLI, "help"], { encoding: "utf8" });
+    const help = spawnSync(process.execPath, [CLI, "help", "all"], { encoding: "utf8" });
     for (const command of [/bumper git status\|sessions/, /bumper mcp list\|show\|bind\|unbind/, /bumper uninstall/, /bumper feedback/, /bumper backup/]) {
       assert.match(help.stdout, command);
     }

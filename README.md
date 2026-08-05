@@ -19,25 +19,28 @@ The unsigned app is intentionally **not** represented as signed or notarized. It
 
 ## Install the CLI technical preview
 
-Requirements: Apple Silicon Mac, Node.js 20 or newer, and Apple's `container` runtime for protected launches.
+Requirements: macOS 26 or newer on Apple Silicon, Node.js 20 or newer, and Apple `container` 1.1 or newer for protected launches.
 
 ```bash
 npm install --global @crostra/bumper@next
-bumper doctor
 ```
 
 This is a pre-release CLI, intended for informed technical evaluation rather than as a broadly recommended stable release. The `next` tag is explicit so that a future `@crostra/bumper` install does not silently pick up a prerelease. The source that produced it is in this repository, under [Apache-2.0](LICENSE).
 
-Create a Project, inspect its effective boundary, run a proof, and manage recovery. The AI runs in your current terminal:
+Start from the folder you want to share. `quickstart` creates or selects its Project, prepares the recommended image, proves a disposable room, and prints the protected launch command:
 
 ```bash
-npm exec bumper -- init
-npm exec bumper -- doctor
-npm exec bumper -- room-image build
-npm exec bumper -- claude     # or codex, cursor, agy, grok
+cd ~/work/acme
+bumper quickstart          # or: quickstart codex, cursor, agy, grok
+bumper status              # one-screen state and the next useful action
+bumper claude              # the AI remains attached to this terminal
 ```
 
-`bumper doctor` explains missing prerequisites and the next safe command. The app and CLI expose the same Project controls; the CLI does not require `node-pty` to be installed merely to check readiness.
+New Projects share only the current folder and start with Allowed only network access for the selected vendor. Existing Projects are reused without widening their folders, network setting, or image. Preview the work without writing configuration or building an image with `bumper quickstart --plan`; use `--no-build` when a missing image should be an error rather than a long build.
+
+`bumper status` is a short, read-only check of the selected Project, boundary, container runtime, live Sessions, and next action. Use `--verbose` for paths and per-tool detail or `--json` for automation. `configured` means no obvious configuration blocker; `bumper doctor` performs the deeper readiness checks. Run `bumper help <topic>` for one command family or `bumper help all` for the full catalog.
+
+To reuse a login already stored on this Mac, run `bumper login list`, then launch with `bumper codex --account <id>`. Informational flags such as `bumper codex --version` do not force an OAuth flow.
 
 ## Prove the boundary
 
@@ -45,10 +48,12 @@ Do not take a security boundary on faith. Bumper runs the actual microVM checks:
 
 ```bash
 bumper prove --sealed  # disposable Sandbox; touches none of your folders
+bumper prove --sealed --json  # machine-readable evidence
 bumper prove           # the selected Project's folders, network, and Git identity
+bumper support         # redacted local diagnostics; nothing is uploaded
 ```
 
-The proof reports both expected and observed results. A mismatch blocks a new protected launch for that Project until it is checked again.
+The proof reports both expected and observed results. A mismatch blocks a new protected launch for that Project until it is checked again. `bumper support` removes common secret shapes, email addresses, and user paths before printing JSON; inspect it before sharing it with an issue.
 
 ## What Bumper controls
 
@@ -67,7 +72,8 @@ See [the security model](docs/SECURITY_MODEL.md), [architecture](docs/ARCHITECTU
 git clone https://github.com/crostra/bumper.git
 cd bumper
 npm install
-npm test          # add BUMPER_VM_TESTS=1 for the microVM boundary proofs
+npm test
+npm run test:vm   # includes the sequential microVM boundary proofs
 npm run build
 ```
 

@@ -190,6 +190,28 @@ test("status format: empty Access points at bumper access set (no home invent)",
   assert.doesNotMatch(text, /readPaths \/ writePaths \/ room doors/);
 });
 
+test("status spells out that Open is unrestricted and shows how to narrow it", async () => {
+  const config = makeConfig({
+    Demo: blankContext({
+      workspace: process.cwd(),
+      room: { enabled: true, image: "test", egress: "open", doors: [] },
+    }),
+  });
+  const snapshot = await buildProjectStatusSnapshot({
+    config,
+    projectName: "Demo",
+    source: "cwd",
+    cwd: process.cwd(),
+    roomAvailable: false,
+    roomAvailableDetail: "test",
+  });
+  const text = formatProjectStatus(snapshot);
+  assert.match(text, /Network: Open — Full internet/);
+  assert.match(text, /Unrestricted internet/);
+  assert.match(text, /bumper network off -p "Demo"/);
+  assert.match(text, /bumper network allowed/);
+});
+
 test("choose-workspace next commands mention access set", () => {
   const lines = nextCommandsForAction("choose-workspace");
   assert.ok(lines.some((l) => /bumper access set/i.test(l)));
@@ -302,11 +324,20 @@ test("CLI process: access set then status + cwd resolve path", () => {
     });
     assert.equal(status.status, 0, status.stderr);
     assert.match(status.stdout, /Project: Local workspace/);
-    assert.match(status.stdout, /resolved via cwd/);
-    assert.match(status.stdout, /workspace:/i);
+    assert.match(status.stdout, /\(via cwd\)/);
+    assert.match(status.stdout, /Folders: 1 shared/);
     assert.doesNotMatch(status.stdout, /none — cwd resolve cannot match/);
 
-    const help = spawnSync(process.execPath, [cli, "help"], { encoding: "utf8", env });
+    const verbose = spawnSync(process.execPath, [cli, "status", "--verbose"], {
+      encoding: "utf8",
+      env,
+      cwd: ws,
+    });
+    assert.equal(verbose.status, 0, verbose.stderr);
+    assert.match(verbose.stdout, /workspace:/i);
+    assert.match(verbose.stdout, new RegExp(ws.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+    const help = spawnSync(process.execPath, [cli, "help", "project"], { encoding: "utf8", env });
     assert.equal(help.status, 0);
     assert.match(help.stdout, /bumper access set/);
   } finally {

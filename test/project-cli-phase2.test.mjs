@@ -12,11 +12,15 @@ import {
   CLI_AGENT_ALIASES,
   assessCliRoomReadiness,
   buildProjectStatusSnapshot,
+  executablePreflightSpec,
   formatProjectStatus,
+  formatProjectStatusSummary,
   formatReadinessRefuse,
   isCliAgentCommand,
   listCliAgentAliases,
   parseProjectFlag,
+  parseRoomAgentInvocation,
+  projectStatusIssues,
   resolveCliAgentId,
   resolveLaunchWorkspace,
   runCliRoomAgent,
@@ -86,6 +90,20 @@ test("CLI agent aliases map to AgentId (host CLI not required)", () => {
   assert.ok(Object.keys(CLI_AGENT_ALIASES).length >= 5);
 });
 
+test("executable preflight seals allowlist egress until launch prepares its network", () => {
+  const spec = {
+    image: "custom/agent:latest",
+    doors: [{ hostPath: "/tmp/work", roomPath: "/workspace", access: "read-write" }],
+    egress: { mode: "allowlist", hosts: ["api.example.test"] },
+    dropCapabilities: true,
+  };
+  const probe = executablePreflightSpec(spec);
+  assert.deepEqual(probe.egress, { mode: "blocked" });
+  assert.equal(probe.image, spec.image);
+  assert.deepEqual(probe.doors, spec.doors);
+  assert.equal(spec.egress.mode, "allowlist", "the real launch boundary must remain unchanged");
+});
+
 test("parseProjectFlag supports -p, --project, --account, and -p=", () => {
   assert.deepEqual(parseProjectFlag(["-p", "Demo", "grok"]), {
     projectFlag: "Demo",
@@ -113,6 +131,17 @@ test("parseProjectFlag supports -p, --project, --account, and -p=", () => {
     rest: ["claude"],
   });
   assert.throws(() => parseProjectFlag(["-p"]), /Missing value/);
+});
+
+test("room-agent parsing keeps --account while preserving vendor args", () => {
+  assert.deepEqual(
+    parseRoomAgentInvocation(["--account", "work", "exec", "hello", "-p", "Demo"]),
+    {
+      projectFlag: "Demo",
+      accountFlag: "work",
+      agentArgs: ["exec", "hello"],
+    },
+  );
 });
 
 test("resolve+readiness refuse: base image does not start Sandbox", async () => {
@@ -372,12 +401,62 @@ test("status snapshot includes Access, image, egress, tools without session", as
 
     const text = formatProjectStatus(snapshot);
     assert.match(text, /Project: Cage/);
-    assert.match(text, /Egress: allowlist/);
+    assert.match(text, /Network: Allowed only — Allowed sites only/);
     assert.match(text, /Access roots:/);
     assert.match(text, /Tool readiness/);
     assert.match(text, /Host install not required|not required/i);
     assert.match(text, /No session started/);
     assert.match(text, /bumper \[-p project\] <cli>/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("scan-first status separates an installed CLI from stopped services and names the fix", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bumper-p2-status-summary-"));
+  try {
+    const config = makeConfig({
+      Demo: blankContext({
+        workspace: root,
+        room: {
+          ...blankContext().room,
+          image: "bumper/ai-room:latest",
+          egress: "open",
+        },
+      }),
+    });
+    const snapshot = await buildProjectStatusSnapshot({
+      config,
+      projectName: "Demo",
+      source: "cwd",
+      cwd: root,
+      roomAvailable: true,
+      roomAvailableDetail: "container CLI version 1.1.0",
+      containerSystemState: "stopped",
+      containerSystemDetail: "apiserver is not running",
+    });
+
+    assert.equal(snapshot.container.usable, true);
+    assert.equal(snapshot.container.systemState, "stopped");
+    assert.match(snapshot.note, /not checked.*services are stopped/i);
+    assert.ok(projectStatusIssues(snapshot).some((issue) => issue.command === "container system start"));
+
+    const text = formatProjectStatusSummary(
+      snapshot,
+      [{ id: "12345678-session", agentName: "Codex" }],
+      { blocked: 2, allowed: 4 },
+    );
+    assert.match(text, /^Bumper status — needs attention/m);
+    assert.match(text, /Sessions: 1 running — Codex \(12345678\)/);
+    assert.match(text, /Network: Open — Full internet \(unrestricted\)/);
+    assert.match(text, /Container CLI: installed/);
+    assert.match(text, /Container service: stopped/);
+    assert.match(text, /Sandbox image: Bumper recommended AI Sandbox image · not-checked/);
+    assert.match(text, /Today: 2 blocked · 4 allowed/);
+    assert.match(text, /Next\n  container system start/);
+    assert.match(text, /Review \(Network is unrestricted\)/);
+    assert.match(text, /bumper network off -p "Demo"/);
+    assert.match(text, /bumper status --verbose/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -421,8 +500,9 @@ test("CLI process: status refuse path for unknown -p; help lists Sandbox entry",
     });
     assert.equal(status.status, 0, status.stderr);
     assert.match(status.stdout, /Project: Demo/);
-    assert.match(status.stdout, /Access roots:/);
-    assert.match(status.stdout, /No session started/);
+    assert.match(status.stdout, /Boundary/);
+    assert.match(status.stdout, /Folders: 1 shared/);
+    assert.match(status.stdout, /Sessions: none running/);
 
     // Readiness refuse without interactive TUI / long container session
     const refuse = spawnSync(process.execPath, [cli, "-p", "Demo", "grok"], {

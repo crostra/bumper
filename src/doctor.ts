@@ -12,7 +12,7 @@
  * No new readiness logic lives here. The only thing doctor adds is collecting
  * those answers into one screen and naming the next command.
  *
- * Honesty rule (docs/SECURITY_MODEL.md): a check that could not run reports
+ * Honesty rule (docs/threat-model.md): a check that could not run reports
  * "skipped" with the reason. It never reports ok. False green is the one
  * failure mode this command exists to avoid.
  */
@@ -38,7 +38,9 @@ import { ensureContainerSystem } from "./operations/container-system.js";
 
 /** Node floor. Below this, `npm i -g @crostra/bumper` is not supported. */
 export const MINIMUM_NODE_MAJOR = 20;
-/** Apple container floor (docs/DISTRIBUTION.md prerequisites). */
+/** Apple container 1.1 is supported by its maintainers on macOS 26+. */
+export const MINIMUM_MACOS_MAJOR = 26;
+/** Apple container floor (docs/packaging.md prerequisites). */
 export const MINIMUM_CONTAINER_VERSION = "1.1.0";
 
 export type DoctorStatus = "ok" | "blocked" | "warn" | "skipped";
@@ -84,6 +86,8 @@ export interface DoctorFacts {
    * Mac" is both wrong and unfixable — they already have one.
    */
   arch: string;
+  /** Host product version from `sw_vers`, e.g. 26.4.1. */
+  osVersion: string;
   /** True when this Node is an x64 build translated by Rosetta. */
   nodeTranslated?: boolean;
   nodeVersion: string;
@@ -164,7 +168,7 @@ function platformCheck(facts: DoctorFacts): DoctorCheck {
       label: "Host",
       status: "blocked",
       detail: `${facts.platform} is not supported. The Sandbox is an Apple container microVM, which is macOS only.`,
-      fix: ["Run Bumper on macOS 15+ (Apple Silicon)."],
+      fix: [`Run Bumper on macOS ${MINIMUM_MACOS_MAJOR}+ (Apple Silicon).`],
     };
   }
   if (facts.arch !== "arm64") {
@@ -176,13 +180,32 @@ function platformCheck(facts: DoctorFacts): DoctorCheck {
       fix: ["Run Bumper on an Apple Silicon Mac."],
     };
   }
+  const macOS = parseVersion(facts.osVersion);
+  if (!macOS) {
+    return {
+      id: "platform",
+      label: "Host",
+      status: "warn",
+      detail: `macOS on Apple Silicon, but the product version could not be measured (need ${MINIMUM_MACOS_MAJOR}+).`,
+      fix: ["Check: sw_vers -productVersion"],
+    };
+  }
+  if (macOS && macOS[0]! < MINIMUM_MACOS_MAJOR) {
+    return {
+      id: "platform",
+      label: "Host",
+      status: "blocked",
+      detail: `macOS ${facts.osVersion} is below the supported floor. Apple container ${MINIMUM_CONTAINER_VERSION}+ requires macOS ${MINIMUM_MACOS_MAJOR}+.`,
+      fix: [`Upgrade this Mac to macOS ${MINIMUM_MACOS_MAJOR} or newer.`],
+    };
+  }
   if (facts.nodeTranslated) {
     return {
       id: "platform",
       label: "Host",
       status: "warn",
       detail:
-        "macOS on Apple Silicon, but this Node is an x64 build running under Rosetta. " +
+        `macOS ${facts.osVersion || "(unknown version)"} on Apple Silicon, but this Node is an x64 build running under Rosetta. ` +
         "The Sandbox is unaffected (it is a separate microVM); native npm modules will build x64.",
       fix: ["Optional: install an arm64 Node, then: npm i -g @crostra/bumper"],
     };
@@ -191,7 +214,7 @@ function platformCheck(facts: DoctorFacts): DoctorCheck {
     id: "platform",
     label: "Host",
     status: "ok",
-    detail: "macOS on Apple Silicon.",
+    detail: `macOS ${facts.osVersion || "(version unknown)"} on Apple Silicon (need ${MINIMUM_MACOS_MAJOR}+).`,
     fix: [],
   };
 }
@@ -547,6 +570,16 @@ export function hostArch(): { arch: string; nodeTranslated: boolean } {
   };
 }
 
+/** Read the product version without importing any GUI/runtime dependency. */
+export function hostMacOSVersion(): string {
+  if (process.platform !== "darwin") return "";
+  const probe = spawnSync("/usr/bin/sw_vers", ["-productVersion"], {
+    encoding: "utf8",
+    timeout: 5_000,
+  });
+  return probe.status === 0 ? probe.stdout.trim() : "";
+}
+
 /** Measure the host. Everything expensive is skipped with a stated reason. */
 export async function collectDoctorFacts(opts: {
   cwd: string;
@@ -589,6 +622,7 @@ export async function collectDoctorFacts(opts: {
   const facts: DoctorFacts = {
     platform: process.platform,
     arch,
+    osVersion: hostMacOSVersion(),
     nodeTranslated,
     nodeVersion: process.versions.node,
     cwd: opts.cwd,

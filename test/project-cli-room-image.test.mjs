@@ -11,7 +11,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const cli = join(root, "dist", "cli.js");
 
 test("help lists room-image build/verify for materialize_path_bin rebuild", () => {
-  const help = spawnSync(process.execPath, [cli, "help"], { encoding: "utf8" });
+  const help = spawnSync(process.execPath, [cli, "help", "all"], { encoding: "utf8" });
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /room-image build/);
   assert.match(help.stdout, /room-image verify/);

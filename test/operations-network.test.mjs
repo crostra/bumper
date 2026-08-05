@@ -174,7 +174,7 @@ test("bumper network writes the Project a CLI-only user can actually narrow", ()
 });
 
 test("bumper network is in --help", () => {
-  const help = spawnSync(process.execPath, [CLI, "help"], { encoding: "utf8" });
+  const help = spawnSync(process.execPath, [CLI, "help", "all"], { encoding: "utf8" });
   assert.equal(help.status, 0);
   assert.match(help.stdout, /bumper network off\|allowed\|open/);
 });

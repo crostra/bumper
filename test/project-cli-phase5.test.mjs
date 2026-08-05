@@ -14,10 +14,12 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import {
   MINIMUM_NODE_MAJOR,
+  MINIMUM_MACOS_MAJOR,
   buildDoctorReport,
   doctorProject,
   formatDoctorReport,
   hostArch,
+  hostMacOSVersion,
 } from "../dist/doctor.js";
 import { applyCreatedProject } from "../dist/project.js";
 import { RECOMMENDED_ROOM_IMAGE, SAFE_BASE_ROOM_IMAGE } from "../dist/room/setup.js";
@@ -28,6 +30,7 @@ function healthyFacts(overrides = {}) {
   return {
     platform: "darwin",
     arch: "arm64",
+    osVersion: "26.4.1",
     nodeVersion: "22.11.0",
     cwd: "/tmp/does-not-matter",
     configPath: "/tmp/config.json",
@@ -151,6 +154,14 @@ test("host and Node floors are stated, not assumed", () => {
   assert.equal(byId(intel, "platform").status, "blocked");
   assert.match(byId(intel, "platform").detail, /Apple Silicon/);
 
+  const oldMac = buildDoctorReport(healthyFacts({ osVersion: "15.7.4" }));
+  assert.equal(byId(oldMac, "platform").status, "blocked");
+  assert.match(byId(oldMac, "platform").detail, new RegExp(`macOS ${MINIMUM_MACOS_MAJOR}\\+`));
+
+  const unknownMac = buildDoctorReport(healthyFacts({ osVersion: "" }));
+  assert.equal(byId(unknownMac, "platform").status, "warn");
+  assert.match(byId(unknownMac, "platform").detail, /could not be measured/);
+
   const oldNode = buildDoctorReport(healthyFacts({ nodeVersion: "18.20.4" }));
   assert.equal(byId(oldNode, "node").status, "blocked");
   assert.match(byId(oldNode, "node").detail, new RegExp(`Node ${MINIMUM_NODE_MAJOR}\\+`));
@@ -197,6 +208,7 @@ test("hardware arch is measured, not read off the Node build (Rosetta)", () => {
   if (process.platform === "darwin") {
     assert.equal(measured.arch, "arm64", "these tests are supported on Apple Silicon");
     assert.equal(measured.nodeTranslated, process.arch !== "arm64");
+    assert.match(hostMacOSVersion(), /^\d+\.\d+/);
   }
 
   const rosetta = buildDoctorReport(healthyFacts({ arch: "arm64", nodeTranslated: true }));
@@ -261,6 +273,9 @@ test("bumper init writes a Sandbox Project, not a legacy host config", () => {
     assert.equal(init.status, 0, init.stderr);
     assert.match(init.stdout, /Project "my-repo"/);
     assert.match(init.stdout, /bumper doctor/);
+    assert.match(init.stdout, /Network: Open — Full internet/);
+    assert.match(init.stdout, /Open means unrestricted internet/);
+    assert.match(init.stdout, /bumper network show/);
     assert.match(init.stdout, /never invents a home-wide door/);
 
     const written = JSON.parse(readFileSync(configPath, "utf8"));
@@ -282,6 +297,16 @@ test("bumper init writes a Sandbox Project, not a legacy host config", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("top-level help gives a fresh user the non-failing order and names Open honestly", () => {
+  const help = spawnSync(process.execPath, [CLI, "--help"], { encoding: "utf8" });
+  assert.equal(help.status, 0, help.stderr);
+  const start = help.stdout.slice(help.stdout.indexOf("Quick start"), help.stdout.indexOf("Everyday commands"));
+  assert.ok(start.indexOf("bumper init") < start.indexOf("bumper doctor"), start);
+  assert.match(start, /bumper network show/);
+  assert.doesNotMatch(start, /bumper room-image build/);
+  assert.match(help.stdout, /--account <id> reuses an account shown by `bumper login list`/);
 });
 
 test("bumper init --legacy keeps the old MCP-proxy example and labels its limit", () => {
@@ -370,7 +395,7 @@ test("bumper doctor is in --help and exits non-zero while something blocks", () 
       BUMPER_STATE: join(root, "state", "state.json"),
     };
 
-    const help = spawnSync(process.execPath, [CLI, "help"], { encoding: "utf8", env });
+    const help = spawnSync(process.execPath, [CLI, "help", "all"], { encoding: "utf8", env });
     assert.equal(help.status, 0);
     assert.match(help.stdout, /bumper doctor/);
     assert.match(help.stdout, /bumper init \[--legacy\]/);

@@ -329,7 +329,7 @@ test("the parity commands work from a terminal", () => {
     assert.notEqual(bind.status, 0);
     assert.match(bind.stderr, /bumper github connect/);
 
-    const help = spawnSync(process.execPath, [CLI, "help"], { encoding: "utf8" });
+    const help = spawnSync(process.execPath, [CLI, "help", "all"], { encoding: "utf8" });
     for (const command of [/bumper prove/, /bumper github list/, /bumper setup list/, /bumper dev sessions/, /bumper login list/, /bumper prefs/, /bumper git repo add/]) {
       assert.match(help.stdout, command);
     }

@@ -272,7 +272,7 @@ test("bumper folders gives a CLI-only user the folder dial", () => {
     assert.match(empty.stderr, /Share at least one folder/);
     assert.match(empty.stderr, /Next:/);
 
-    const help = spawnSync(process.execPath, [CLI, "help"], { encoding: "utf8" });
+    const help = spawnSync(process.execPath, [CLI, "help", "project"], { encoding: "utf8" });
     assert.match(help.stdout, /bumper folders add <path>/);
   } finally {
     rmSync(root, { recursive: true, force: true });

@@ -29,6 +29,7 @@
     "app:smoke": "node scripts/smoke-dmg.mjs",
     "typecheck": "tsc --noEmit",
     "test": "tsc && BUMPER_NO_CONTAINER_AUTOSTART=1 node --test \"test/**/*.test.mjs\"",
+    "test:vm": "tsc && BUMPER_NO_CONTAINER_AUTOSTART=1 BUMPER_VM_TESTS=1 node --test --test-concurrency=1 \"test/**/*.test.mjs\"",
     "prepare": "tsc",
     "icons": "electron scripts/render-icons.mjs"
   },

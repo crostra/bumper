@@ -234,8 +234,20 @@ export function autoApproveEnvFor(id: string): Record<string, string> {
  * When no credential is present, Bumper launches `codex login --device-auth`
  * instead of the normal agent command (Phase 9-1c / terminal-login-canonical §4.7).
  */
-export function forceCodexDeviceAuthLogin(agentId: string, credentialPresent: boolean): boolean {
-  return agentId === "codex" && !credentialPresent;
+export function forceCodexDeviceAuthLogin(
+  agentId: string,
+  credentialPresent: boolean,
+  agentArgs: string[] = [],
+): boolean {
+  if (agentId !== "codex" || credentialPresent) return false;
+
+  // Let a fresh user inspect the CLI that is actually installed in the image.
+  // These flags exit without starting an agent, so forcing an OAuth flow here
+  // turns harmless diagnosis (`bumper codex --version`) into a human blocker.
+  const informational = new Set(["--help", "-h", "--version", "-V"]);
+  if (agentArgs.some((arg) => informational.has(arg))) return false;
+
+  return true;
 }
 
 /**

@@ -16,13 +16,17 @@ import { applyRule, inferSpecFromString, lastBlockedSpec } from "./rules.js";
 import {
   buildProjectStatusSnapshot,
   formatProjectStatus,
+  formatProjectStatusSummary,
   isCliAgentCommand,
   listCliAgentAliases,
   parseProjectFlag,
+  parseRoomAgentInvocation,
+  probeRoomImageForAgent,
   resolveCliAgentId,
   resolveProjectForCli,
   resolveProjectForStatus,
   runCliRoomAgent,
+  projectStatusIssues,
 } from "./cli-room.js";
 import {
   applyCreatedProject,
@@ -54,6 +58,7 @@ import {
   removeProjectFolder,
 } from "./operations/folders.js";
 import { createProject, deleteProject, listProjects } from "./operations/project.js";
+import { prepareQuickstartProject } from "./operations/quickstart.js";
 import { leaseSessionRefs } from "./operations/running-sessions.js";
 import { describeProjectGit, listGitSessions, setGitSessionAccess } from "./operations/git.js";
 import {
@@ -85,6 +90,7 @@ import { listDevelopmentSessions, setDevelopmentSessionAccess } from "./operatio
 import { describePrefs, retentionSentence, setPref } from "./operations/prefs.js";
 import { listStoredLogins, removeStoredLogin } from "./operations/logins.js";
 import { withGitBindings } from "./git-repositories.js";
+import { buildSupportBundle, redactDiagnosticText } from "./support.js";
 import type { Config } from "./types.js";
 
 /** Reported in `bumper feedback` so an issue names the build it came from. */
@@ -95,6 +101,7 @@ import {
   RECOMMENDED_ROOM_IMAGE,
   RECOMMENDED_ROOM_RECIPE,
   verifyRecommendedRoomAuthOverlay,
+  SAFE_BASE_ROOM_IMAGE,
 } from "./room/setup.js";
 import { AppleContainerBackend } from "./room/apple-container.js";
 import {
@@ -106,21 +113,48 @@ import {
 } from "./mcp-hub.js";
 import { homedir } from "node:os";
 
-const HELP = `bumper — keep your AI inside the Project cage you picked.
+const HELP = `bumper — run AI CLIs inside the Project boundary you chose.
 
-Start here (CLI-only, no Mac app needed):
-  brew install container      Apple container (once; Bumper starts its services for you)
-  bumper doctor               Container / Node / Sandbox image / Access in one screen
-  bumper init                 Create a Sandbox Project for this folder (writes the user config)
-  bumper room-image build     Build the recommended AI Sandbox image
-  bumper network off          Cut the Sandbox off the internet (or: allowed / open)
-  bumper [-p project] <cli>   Launch the AI CLI in that Sandbox, on this TTY
+Quick start
+  brew install container      Install Apple container once
+  bumper quickstart            Create, verify, and prepare this folder for Claude
+  bumper status               See the boundary, runtime, Sessions, and next action
+  bumper doctor               Check whether a protected Sandbox can launch
+  bumper network show         Check Off / Allowed only / Open (full internet)
+  bumper claude               Launch Claude (also: codex, cursor, agy, grok)
 
-Usage:
-  bumper [-p project] <cli>   Launch AI CLI in a Sandbox on this TTY (claude|codex|cursor|agy|grok|…)
+Everyday commands
+  bumper status [-p project]  Fast current state; --verbose shows details, --json is machine-readable
+  bumper [-p project] <cli>   Launch in its Sandbox; --account <id> reuses an account shown by \`bumper login list\`
+  bumper project list         List Projects
+  bumper folders list         Show folders shared with the Sandbox
+  bumper network show         Show Off / Allowed only / Open internet
+  bumper login list           Show reusable AI logins (never prints credentials)
+  bumper log --blocked        Show blocked audit events
+
+When something is wrong
+  bumper doctor               Diagnose prerequisites and print the next command
+  bumper status --verbose     Show paths, image, tools, and saved-login detail
+  bumper help status          Explain status versus doctor
+
+More help
+  bumper help <topic>         Topics: status, project, network, sessions, login, troubleshoot
+  bumper help all             Every command, including advanced operations
+  bumper <command> --help     Help for a command
+  bumper --version            Print the installed Bumper version
+
+The Sandbox image is canonical; host vendor CLI installs are not required.
+Config: $BUMPER_CONFIG → ./bumper.config.json → ~/.bumper/config.json`;
+
+const HELP_ALL = `${HELP}
+
+All commands:
   bumper doctor [-p project]  Diagnose prerequisites; prints the next command.
                               --quick skips the image probe · --no-start leaves stopped services alone
-  bumper status [-p project]  Show Project cage summary (Access, image, egress, tools) — no session
+  bumper status [-p project]  Fast Project state; --verbose for the full boundary, --json for automation
+  bumper quickstart [cli]     Create/select a Project, prepare its image, prove the Sandbox, print launch
+  bumper [-p project] <cli>   Launch AI CLI in a Sandbox on this TTY (claude|codex|cursor|agy|grok|…)
+                              --account <id> reuses an account shown by \`bumper login list\`
   bumper project list|create <name>|remove <name>   Projects without opening the app
   bumper folders list [-p project]         What this Project shares with the Sandbox
   bumper folders add <path> [--read-only]  Share the project folder (.), a subfolder, or ~/anywhere
@@ -138,7 +172,7 @@ Usage:
   bumper allow [last|<rule>]  Allow the last blocked action (or a rule) in the active context
   bumper deny <rule>          Block a rule in the active context
   bumper run -- <cmd...>      Launch a command inside the OS sandbox for the active context
-  bumper prove [-p project] [--sealed]  Run the real Sandbox and try to break out of it
+  bumper prove [-p project] [--sealed] [--json]  Run the real Sandbox and try to break out of it
   bumper git status|sessions [-p project]   Project Git access; live Sessions and their access
   bumper git repo add <url> [--access read|write|pr|workflow]   Bind a repository
   bumper git off|read|write <session-id>   Change one live Session (write = 15 minutes)
@@ -151,6 +185,7 @@ Usage:
   bumper backup list|restore <id>      Config backups (the way back from a bad edit)
   bumper uninstall [--dry-run|--yes]   Remove Bumper's own state; never your folders
   bumper feedback [--bug] [--open]     Where to say what you hit (no telemetry)
+  bumper support [-p project]           Print a redacted local diagnostic bundle (nothing is sent)
   bumper mcp connect --project <id>   Stdio MCP Hub bridge for one Project (secrets stay in Bumper)
   bumper mcp client-config --project <id> [--path file] [--apply|--rollback <backup>]
                               External MCP client snippet (MCP-only — files/shell/network not protected)
@@ -169,12 +204,118 @@ Sandbox entry (primary):
   Host vendor CLIs are not required — the CLI inside the Sandbox image is canonical.
   Older bumper/ai-room:latest may hide grok under auth mounts — rebuild: bumper room-image build --force.
 
-Config resolution: $BUMPER_CONFIG → ./bumper.config.json → ~/.bumper/config.json
 `;
+
+const HELP_TOPICS: Record<string, string> = {
+  status: `bumper status — the fast answer to “what state am I in?”
+
+Usage:
+  bumper status [-p project]            Short human-readable summary
+  bumper status [-p project] --verbose  Full paths, tools, image, and Access detail
+  bumper status [-p project] --json     Machine-readable snapshot (never includes credentials)
+
+The first line is either:
+  configured       The Project has no obvious configuration blocker.
+  needs attention One or more concrete fixes are listed under Next.
+
+“configured” is not a launch proof. \`bumper doctor\` performs the slower image
+and tool checks and answers whether this Mac can launch a protected Sandbox.`,
+  project: `bumper project — create and select Project boundaries
+
+  bumper project list
+  bumper project create <name> [folder]
+  bumper project remove <name>
+  bumper folders list [-p project]
+  bumper folders add <path> [--read-only]
+  bumper folders remove <path>
+  bumper access set -p <project> [folder]   Set its primary folder
+  bumper status -p <project>                Inspect the result`,
+  network: `bumper network — control internet access for new Sessions
+
+  bumper network show [-p project]
+  bumper network off [-p project]                 No internet
+  bumper network allowed <host…> [-p project]     Listed sites only
+  bumper network open [-p project]                Full, unrestricted internet
+
+An already-running Session keeps the boundary it started with.`,
+  sessions: `Live Session controls
+
+  bumper status [-p project]             Running Session count
+  bumper git sessions [-p project]       Git access per Session
+  bumper dev sessions [-p project]       Local Preview / Docker per Session
+  bumper git off|read|write <session-id>
+  bumper dev preview|docker on|off <session-id>`,
+  login: `bumper login — saved AI authentication
+
+  bumper login list                      Account IDs and reuse commands
+  bumper <cli> --account <id>            Reuse one saved account
+  bumper login remove <tool> [account]   Remove saved authentication
+
+Credentials are never printed. If no login is saved, sign in inside the Sandbox terminal.`,
+  troubleshoot: `Troubleshooting
+
+  bumper status                 Fast state and immediate fixes
+  bumper doctor                 Full launch-readiness diagnosis
+  bumper doctor --no-start      Diagnose without starting container services
+  bumper room-image verify      Verify AI CLIs under clean auth overlays
+  bumper backup list            List recoverable config backups
+  bumper support                Redacted diagnostics to paste into an issue
+  bumper feedback --bug         Show where to report a bug (no telemetry)`,
+  quickstart: `bumper quickstart — first protected result from the current folder
+
+Usage:
+  bumper quickstart [claude|codex|cursor|agy|grok] [-p project]
+  bumper quickstart [cli] --plan       Preview without writing or starting services
+  bumper quickstart [cli] --no-build   Refuse instead of building a missing image
+  bumper quickstart [cli] --no-proof   Prepare without running the disposable proof
+
+With no -p, Bumper reuses the unique Project covering cwd or creates one. A new
+Project starts with Allowed-only network access for the selected AI vendor.
+Existing Project folders, network, and custom images are never silently changed.`,
+  support: `bumper support — diagnostics you choose to share
+
+Usage:
+  bumper support [-p project]
+
+Prints redacted JSON to stdout. It does not start container services, print
+credentials, include absolute user paths, upload anything, or open a browser.`,
+};
+
+function printHelp(topic?: string): void {
+  const key = topic?.toLowerCase();
+  if (!key) {
+    console.log(HELP);
+    return;
+  }
+  if (key === "all") {
+    console.log(HELP_ALL);
+    return;
+  }
+  const aliases: Record<string, string> = {
+    doctor: "troubleshoot",
+    folders: "project",
+    access: "project",
+    git: "sessions",
+    dev: "sessions",
+    prove: "troubleshoot",
+  };
+  const resolved = aliases[key] ?? key;
+  const help = HELP_TOPICS[resolved];
+  if (help) {
+    console.log(help);
+    return;
+  }
+  fail(`No help topic "${topic}".\n\nTopics: status, project, network, sessions, login, quickstart, support, troubleshoot, all`);
+}
 
 function fail(msg: string): never {
   console.error(msg);
   process.exit(1);
+}
+
+/** POSIX-shell-safe display for commands the user can paste. */
+function shellArg(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 /**
@@ -244,7 +385,11 @@ async function cmdInit(argv: string[]): Promise<void> {
   console.log(`Created ${target}`);
   console.log(`Project "${name}"`);
   console.log(`  Folder shared with the Sandbox: ${project.workspace}`);
-  console.log(`  Network: ${project.room?.egress === "blocked" ? "Off" : project.room?.egress === "allowlist" ? "Allowed only" : "Open"}`);
+  const egress = project.room?.egress ?? "blocked";
+  console.log(`  Network: ${networkLabel(egress)} — ${networkSentence(egress)}`);
+  if (egress === "open") {
+    console.log("    Open means unrestricted internet. Use `bumper network off` or `bumper network allowed …` to narrow it.");
+  }
   console.log(`  Sandbox image: ${project.room?.image}`);
   console.log("");
   console.log("Nothing outside that folder is shared. Bumper never invents a home-wide door.");
@@ -256,7 +401,165 @@ async function cmdInit(argv: string[]): Promise<void> {
   if (needsImage) {
     console.log("  2. bumper room-image build  # build the AI Sandbox image (first run takes a while)");
   }
-  console.log(`  ${needsImage ? 3 : 2}. bumper -p "${name}" claude   # protected launch on this TTY (claude|codex|cursor|agy|grok)`);
+  console.log(`  ${needsImage ? 3 : 2}. bumper network show -p "${name}"   # Open is unrestricted; choose Off/Allowed only if needed`);
+  console.log(`  ${needsImage ? 4 : 3}. bumper -p "${name}" claude   # protected launch on this TTY (claude|codex|cursor|agy|grok)`);
+}
+
+/** `bumper quickstart` — one command from an empty local state to evidence. */
+async function cmdQuickstart(argv: string[]): Promise<void> {
+  const plan = argv.includes("--plan");
+  const noBuild = argv.includes("--no-build");
+  const noProof = argv.includes("--no-proof");
+  const filtered = argv.filter((arg) => !["--plan", "--no-build", "--no-proof"].includes(arg));
+  let projectFlag: string | undefined;
+  let accountFlag: string | undefined;
+  let rest: string[];
+  try {
+    ({ projectFlag, accountFlag, rest } = parseProjectFlag(filtered));
+  } catch (err) {
+    fail((err as Error).message);
+  }
+  if (accountFlag) fail("--account belongs on the launch command, not quickstart.");
+  const agentToken = rest[0] ?? "claude";
+  const agentId = resolveCliAgentId(agentToken);
+  if (!agentId || rest.length > 1) {
+    fail("Usage: bumper quickstart [claude|codex|cursor|agy|grok] [-p project] [--plan|--no-build|--no-proof]");
+  }
+
+  const target = resolveConfigPath();
+  let config: Config;
+  if (existsSync(target)) {
+    try {
+      config = loadConfig(target).config;
+    } catch (err) {
+      fail(`${(err as Error).message}\n\nNext:\n  bumper backup list`);
+    }
+  } else {
+    config = ConfigSchema.parse({});
+  }
+
+  let prepared;
+  try {
+    prepared = prepareQuickstartProject({
+      config,
+      cwd: process.cwd(),
+      agentId,
+      projectFlag,
+    });
+  } catch (err) {
+    failFromOperation(err);
+  }
+  const project = config.contexts[prepared.projectName]!;
+  const selectedImage = project.room?.image || SAFE_BASE_ROOM_IMAGE;
+  const customImage = selectedImage !== SAFE_BASE_ROOM_IMAGE && selectedImage !== RECOMMENDED_ROOM_IMAGE;
+  if (!prepared.created && project.room?.enabled === false) {
+    fail(`Project "${prepared.projectName}" has its Sandbox disabled. Quickstart will not silently enable it.\n\nNext:\n  Open Bumper app → Project → Overview and enable Sandbox`);
+  }
+
+  if (plan) {
+    console.log("bumper quickstart — plan only (no files written; no services started)");
+    console.log(`  Project: ${prepared.projectName} (${prepared.created ? "would create" : "reuse"})`);
+    console.log(`  Folder: ${prepared.workspace}`);
+    console.log(prepared.created
+      ? `  Network: Allowed only (${prepared.networkTemplate})`
+      : `  Network: unchanged (${networkLabel(project.room?.egress || "blocked")})`);
+    console.log(customImage
+      ? `  Image: keep custom image ${selectedImage}`
+      : `  Image: verify or build ${RECOMMENDED_ROOM_IMAGE}`);
+    console.log(`  Proof: ${noProof ? "skip by request" : "run disposable sealed Sandbox"}`);
+    console.log(`  Launch after setup: bumper -p ${shellArg(prepared.projectName)} ${agentToken}`);
+    return;
+  }
+
+  // Fail before writing a config when the host cannot possibly run the result.
+  const facts = await collectDoctorFacts({ cwd: process.cwd(), skipImageProbe: true, noStart: false });
+  const hostReport = buildDoctorReport(facts);
+  const hostBlocked = hostReport.blocked.filter((check) => ["platform", "node", "container"].includes(check.id));
+  if (hostBlocked.length) {
+    fail([
+      "Quickstart cannot prepare a working Sandbox on this host:",
+      ...hostBlocked.map((check) => `  ✗ ${check.label}: ${check.detail}`),
+      "",
+      "Next:",
+      ...hostBlocked.flatMap((check) => check.fix.map((fix) => `  ${fix}`)),
+    ].join("\n"));
+  }
+  if (facts.containerSystemAutoStarted) {
+    console.log("Apple container services were stopped — started them (stop again: container system stop)");
+  }
+
+  if (!customImage) {
+    const recipe = inspectRecommendedRoomRecipe();
+    let overlay = recipe.present && !recipe.stale
+      ? verifyRecommendedRoomAuthOverlay()
+      : { ok: false, detail: recipe.detail };
+    if (!recipe.present || recipe.stale || !overlay.ok) {
+      if (noBuild) {
+        fail([
+          `${RECOMMENDED_ROOM_IMAGE} is not ready: ${overlay.detail}`,
+          "",
+          "Next:",
+          `  bumper room-image build${recipe.stale || !overlay.ok ? " --force" : ""}`,
+          `  bumper quickstart ${agentToken}${projectFlag ? ` -p ${shellArg(projectFlag)}` : ""} --no-build`,
+        ].join("\n"));
+      }
+      console.log(`Preparing ${RECOMMENDED_ROOM_IMAGE}. The first build can take several minutes…`);
+      const built = await buildRecommendedRoomImage(
+        (line) => process.stdout.write(`${line}\n`),
+        { noCache: recipe.stale || (recipe.present && !overlay.ok), verify: true },
+      );
+      if (!built.ok) {
+        fail(`Sandbox image build failed — ${built.failedTool}: ${built.hint}`);
+      }
+      overlay = { ok: Boolean(built.verifyOk), detail: built.verifyDetail || "Image built." };
+    }
+    if (!overlay.ok) fail(`Sandbox image verification failed: ${overlay.detail}`);
+    project.room = { ...project.room, enabled: true, image: RECOMMENDED_ROOM_IMAGE };
+  } else {
+    console.log(`Keeping existing custom image: ${selectedImage}`);
+  }
+
+  const imageProbe = await probeRoomImageForAgent({
+    context: project,
+    workspace: prepared.workspace,
+    agentId,
+    roomAvailable: facts.container.usable,
+    roomAvailableDetail: facts.container.detail,
+  });
+  if (imageProbe.status !== "ready") {
+    fail([
+      `The selected ${agentToken} CLI is not ready: ${imageProbe.detail}`,
+      "",
+      "Next:",
+      project.room?.image === RECOMMENDED_ROOM_IMAGE
+        ? "  bumper room-image build --force"
+        : `  Use a custom image that includes the ${agentToken} executable.`,
+    ].join("\n"));
+  }
+  console.log(`Verified ${agentToken} in ${project.room?.image}.`);
+
+  if (!noProof) {
+    console.log("Proving a disposable sealed Sandbox (none of your folders are mounted)…");
+    const proof = await proveSealedRoom();
+    if (!proof.available) fail(`Cannot run the proof — ${proof.detail}`);
+    for (const probe of proof.results) console.log(`  ${probe.contained ? "✓" : "✗"} ${probe.title}`);
+    const failed = proof.results.filter((probe) => !probe.contained);
+    if (failed.length) {
+      fail(`${failed.length} of ${proof.results.length} proof checks failed. Do not rely on this boundary.`);
+    }
+    console.log(`  ${proof.results.length}/${proof.results.length} matched. The walls held.`);
+  }
+
+  // Commit the Project only after the default proof passes. A failed first-run
+  // proof must not leave behind a Project that looks ready to launch.
+  writeConfigJson(target, config);
+  console.log(`\n${prepared.created ? "Created" : "Updated"} Project "${prepared.projectName}" in ${target}`);
+  console.log(`  Folder: ${prepared.workspace}`);
+  console.log(`  Network: ${networkLabel(project.room?.egress || "blocked")} — ${networkSentence(project.room?.egress || "blocked")}`);
+  console.log(`  Image: ${project.room?.image}`);
+  console.log("\nReady to launch. Authentication happens inside the Sandbox and is saved for reuse:");
+  console.log(`  bumper -p ${shellArg(prepared.projectName)} ${agentToken}`);
+  console.log("\nCheck later: bumper status   ·   Share diagnostics: bumper support");
 }
 
 /** The pre-Sandbox host-proxy example. Kept for existing MCP-proxy setups. */
@@ -285,7 +588,8 @@ function cmdInitLegacy(): void {
 /** `bumper prove` — run the real Sandbox and try to break out of it. */
 async function cmdProve(argv: string[]): Promise<void> {
   const sealed = argv.includes("--sealed");
-  const filtered = argv.filter((a) => a !== "--sealed");
+  const json = argv.includes("--json");
+  const filtered = argv.filter((a) => a !== "--sealed" && a !== "--json");
   let projectFlag: string | undefined;
   let rest: string[];
   try {
@@ -293,17 +597,38 @@ async function cmdProve(argv: string[]): Promise<void> {
   } catch (err) {
     fail((err as Error).message);
   }
-  if (rest.length) fail(`Unexpected arguments: ${rest.join(" ")}\nUsage: bumper prove [-p project] [--sealed]`);
+  if (rest.length) fail(`Unexpected arguments: ${rest.join(" ")}\nUsage: bumper prove [-p project] [--sealed] [--json]`);
 
   const system = ensureContainerSystem();
   if (system.started) {
-    console.log("Apple container services were stopped — started them (stop again: container system stop)");
+    const message = "Apple container services were stopped — started them (stop again: container system stop)";
+    (json ? console.error : console.log)(message);
   }
 
   if (sealed) {
-    console.log("Prove it — a disposable Sandbox that touches none of your folders.");
-    console.log("");
+    if (!json) {
+      console.log("Prove it — a disposable Sandbox that touches none of your folders.");
+      console.log("");
+    }
     const result = await proveSealedRoom();
+    if (json) {
+      const failed = result.results.filter((probe) => !probe.contained).length;
+      console.log(JSON.stringify({
+        kind: "bumper-sealed-proof",
+        available: result.available,
+        detail: redactDiagnosticText(result.detail, { home: homedir(), cwd: process.cwd() }),
+        total: result.results.length,
+        passed: result.results.length - failed,
+        allMatch: result.available && failed === 0,
+        results: result.results.map((probe) => ({
+          id: probe.id,
+          title: probe.title,
+          pass: probe.contained,
+          evidence: redactDiagnosticText(probe.evidence, { home: homedir(), cwd: process.cwd() }),
+        })),
+      }, null, 2));
+      process.exit(result.available && failed === 0 ? 0 : 1);
+    }
     if (!result.available) {
       fail(`Cannot run the proof — ${result.detail}\n\nNext:\n  container system start\n  If \`container\` is missing: brew install container`);
     }
@@ -326,6 +651,30 @@ async function cmdProve(argv: string[]): Promise<void> {
     result = await proveProject({ config, projectName });
   } catch (err) {
     failFromOperation(err);
+  }
+
+  if (json) {
+    console.log(JSON.stringify({
+      kind: "bumper-project-proof",
+      available: result.available,
+      detail: redactDiagnosticText(result.detail, { home: homedir(), cwd: process.cwd() }),
+      projectName: redactDiagnosticText(result.projectName, { home: homedir(), cwd: process.cwd() }),
+      workspace: redactDiagnosticText(result.workspace, { home: homedir(), cwd: process.cwd() }),
+      image: result.image ? redactDiagnosticText(result.image, { home: homedir(), cwd: process.cwd() }) : undefined,
+      total: result.total,
+      passed: result.passed,
+      allMatch: result.allMatch,
+      launchBlocked: result.launchBlocked,
+      results: result.results.map((probe) => ({
+        id: probe.id,
+        title: probe.title,
+        pass: probe.pass,
+        expected: probe.expect,
+        observed: probe.observed,
+        evidence: redactDiagnosticText(probe.evidence, { home: homedir(), cwd: process.cwd() }),
+      })),
+    }, null, 2));
+    process.exit(result.available && result.allMatch ? 0 : 1);
   }
 
   console.log(`Prove it — Project "${result.projectName}"`);
@@ -883,11 +1232,13 @@ function cmdLogin(argv: string[]): void {
       return;
     }
     for (const login of stored) {
-      console.log(`${login.agentName}  (${login.agentId})  identity: ${login.identityLabel}`);
+      console.log(`${login.agentName}  (${login.agentId})`);
+      console.log(`    Account: ${login.identityId}  ·  Identity: ${login.identityLabel}`);
       if (login.usedBy.length) console.log(`    Used by: ${login.usedBy.join(", ")}`);
+      else console.log(`    Reuse in a Project: bumper ${login.agentId} --account ${login.identityId}`);
     }
     console.log("");
-    console.log("Remove one: bumper login remove <tool>");
+    console.log("Remove one: bumper login remove <tool> --identity <account-id>");
     return;
   }
 
@@ -998,8 +1349,9 @@ function cmdBackup(argv: string[]): void {
 /** `bumper feedback` — a URL, opened on request. No telemetry, ever. */
 async function cmdFeedback(argv: string[]): Promise<void> {
   const bug = argv.includes("--bug");
-  const rest = argv.filter((a) => a !== "--bug");
-  if (rest.length) fail(`Unexpected arguments: ${rest.join(" ")}\nUsage: bumper feedback [--bug]`);
+  const open = argv.includes("--open");
+  const rest = argv.filter((a) => a !== "--bug" && a !== "--open");
+  if (rest.length) fail(`Unexpected arguments: ${rest.join(" ")}\nUsage: bumper feedback [--bug] [--open]`);
 
   let containerDetail: string | undefined;
   try {
@@ -1025,10 +1377,73 @@ async function cmdFeedback(argv: string[]): Promise<void> {
   for (const line of target.context) console.log(`  ${line}`);
   console.log("");
   console.log("Open it: bumper feedback --open");
-  if (argv.includes("--open")) {
+  if (open) {
     const { spawn } = await import("node:child_process");
     spawn("open", [target.url], { stdio: "ignore", detached: true }).unref();
   }
+}
+
+/** `bumper support` — explicit, local-only, redacted diagnostic JSON. */
+async function cmdSupport(argv: string[]): Promise<void> {
+  let projectFlag: string | undefined;
+  let rest: string[];
+  try {
+    ({ projectFlag, rest } = parseProjectFlag(argv));
+  } catch (err) {
+    fail((err as Error).message);
+  }
+  if (rest.length) fail(`Unexpected arguments: ${rest.join(" ")}\nUsage: bumper support [-p project]`);
+
+  const facts = await collectDoctorFacts({
+    cwd: process.cwd(),
+    projectFlag,
+    skipImageProbe: true,
+    noStart: true,
+  });
+  const doctor = buildDoctorReport(facts);
+  let project: Awaited<ReturnType<typeof buildProjectStatusSnapshot>> | undefined;
+  let sessions: { id: string; agentName: string }[] = [];
+  let audit: { blocked: number; allowed: number } | undefined;
+  if (facts.config && doctor.projectName) {
+    try {
+      project = await buildProjectStatusSnapshot({
+        config: facts.config,
+        projectName: doctor.projectName,
+        source: doctor.projectSource || "unknown",
+        cwd: process.cwd(),
+        roomAvailable: facts.container.usable,
+        roomAvailableDetail: facts.container.detail,
+        containerSystemState: facts.containerSystemDetail
+          ? "stopped"
+          : facts.container.usable ? "running" : "unavailable",
+        containerSystemDetail: facts.containerSystemDetail || facts.container.detail,
+      });
+      sessions = leaseSessionRefs()
+        .filter((session) => session.context === doctor.projectName)
+        .map((session) => ({ id: session.id, agentName: session.agentName || "AI CLI" }));
+      try {
+        audit = todayCounts(doctor.projectName);
+      } catch {
+        /* optional */
+      }
+    } catch {
+      // Doctor already carries the actionable resolution error. A support
+      // command must still return diagnostics instead of becoming another trap.
+    }
+  }
+
+  console.log(JSON.stringify(buildSupportBundle({
+    bumperVersion: BUMPER_VERSION,
+    platform: facts.platform,
+    osVersion: facts.osVersion,
+    arch: facts.arch,
+    nodeVersion: facts.nodeVersion,
+    doctor,
+    project,
+    sessions,
+    audit,
+    redaction: { home: homedir(), cwd: process.cwd(), configPath: facts.configPath },
+  }), null, 2));
 }
 
 /** Resolve which Project a boundary edit targets, or fail with the reason. */
@@ -1158,10 +1573,10 @@ function cmdProject(argv: string[]): void {
     }
     for (const project of projects) {
       const mark = project.isDefault ? "●" : " ";
-      const network = project.egress === "blocked" ? "Off" : project.egress === "allowlist" ? "Allowed only" : "Open";
+      const egress = project.egress as "blocked" | "allowlist" | "open";
       console.log(`${mark} ${project.name}`);
       console.log(`    Folder: ${project.workspace || "(unset)"}`);
-      console.log(`    Network: ${network}  ·  Shared roots: ${project.accessRootCount}`);
+      console.log(`    Network: ${networkLabel(egress)} — ${networkSentence(egress)}  ·  Shared roots: ${project.accessRootCount}`);
     }
     return;
   }
@@ -1186,7 +1601,9 @@ function cmdProject(argv: string[]): void {
     saveConfigFile(path, config);
     console.log(`Created Project "${result.name}"`);
     console.log(`  Folder shared with the Sandbox: ${result.workspace}`);
-    console.log(`  Network: ${result.egress === "blocked" ? "Off" : result.egress === "allowlist" ? "Allowed only" : "Open"}`);
+    const egress = result.egress as "blocked" | "allowlist" | "open";
+    console.log(`  Network: ${networkLabel(egress)} — ${networkSentence(egress)}`);
+    if (egress === "open") console.log("    Open means unrestricted internet.");
     console.log("");
     console.log("Nothing outside that folder is shared.");
     console.log("");
@@ -1439,7 +1856,10 @@ function cmdUse(name?: string): void {
  * Sandbox-first Project summary.
  */
 async function cmdStatus(argv: string[]): Promise<void> {
-  const filtered = argv;
+  const verbose = argv.includes("--verbose");
+  const json = argv.includes("--json");
+  if (verbose && json) fail("Choose one output format: bumper status --verbose  or  bumper status --json");
+  const filtered = argv.filter((arg) => arg !== "--verbose" && arg !== "--json");
   let projectFlag: string | undefined;
   let rest: string[];
   try {
@@ -1447,9 +1867,22 @@ async function cmdStatus(argv: string[]): Promise<void> {
   } catch (err) {
     fail((err as Error).message);
   }
-  if (rest.length) fail(`Unexpected arguments: ${rest.join(" ")}\nUsage: bumper status [-p project]`);
+  if (rest.length) {
+    fail(`Unexpected arguments: ${rest.join(" ")}\nUsage: bumper status [-p project] [--verbose|--json]`);
+  }
 
-  const { path, config } = loadConfig();
+  let loaded: ReturnType<typeof loadConfig>;
+  try {
+    loaded = loadConfig();
+  } catch (err) {
+    fail(
+      `${(err as Error).message}\n\n` +
+      "Next:\n" +
+      "  bumper init      # create a Project for this folder\n" +
+      "  bumper doctor    # check the rest of the setup",
+    );
+  }
+  const { path, config } = loaded;
   void path;
 
 
@@ -1458,7 +1891,9 @@ async function cmdStatus(argv: string[]): Promise<void> {
     cwd: process.cwd(),
     flag: projectFlag,
   });
-  if ("error" in resolved) fail(resolved.error);
+  if ("error" in resolved) {
+    fail(`${resolved.error}\n\nNext:\n  bumper project list\n  bumper status -p <project>`);
+  }
 
   const snapshot = await buildProjectStatusSnapshot({
     config,
@@ -1466,15 +1901,40 @@ async function cmdStatus(argv: string[]): Promise<void> {
     source: resolved.source,
     cwd: process.cwd(),
   });
-  console.log(formatProjectStatus(snapshot));
-
-  // Compact today counts when log exists for this project name
+  const sessions = leaseSessionRefs()
+    .filter((session) => session.context === resolved.name)
+    .map((session) => ({ id: session.id, agentName: session.agentName || "AI CLI" }));
+  let audit: { blocked: number; allowed: number } | undefined;
   try {
-    const counts = todayCounts(resolved.name);
-    console.log(`Today (audit): ${counts.blocked} blocked · ${counts.allowed} allowed`);
+    audit = todayCounts(resolved.name);
   } catch {
     /* optional */
   }
+
+  if (json) {
+    console.log(JSON.stringify({
+      overall: projectStatusIssues(snapshot).length ? "needs-attention" : "configured",
+      snapshot,
+      sessions,
+      audit: audit ?? null,
+      issues: projectStatusIssues(snapshot),
+    }, null, 2));
+    return;
+  }
+
+  if (verbose) {
+    console.log(formatProjectStatus(snapshot));
+    console.log(
+      sessions.length
+        ? `Running Sessions: ${sessions.map((session) => `${session.agentName} (${session.id})`).join(", ")}`
+        : "Running Sessions: none",
+    );
+    if (audit) console.log(`Today (audit): ${audit.blocked} blocked · ${audit.allowed} allowed`);
+    console.log("\nShort view: bumper status");
+    return;
+  }
+
+  console.log(formatProjectStatusSummary(snapshot, sessions, audit));
 }
 
 /**
@@ -1483,22 +1943,12 @@ async function cmdStatus(argv: string[]): Promise<void> {
  */
 async function cmdRoomAgent(cliName: string, argv: string[]): Promise<void> {
   let projectFlag: string | undefined;
+  let accountFlag: string | undefined;
   let rest: string[];
   try {
-    ({ projectFlag, rest } = parseProjectFlag(argv));
+    ({ projectFlag, accountFlag, agentArgs: rest } = parseRoomAgentInvocation(argv));
   } catch (err) {
     fail((err as Error).message);
-  }
-
-  // Support: bumper grok -p Demo  (flag after command)
-  if (!projectFlag) {
-    try {
-      const again = parseProjectFlag(rest);
-      projectFlag = again.projectFlag;
-      rest = again.rest;
-    } catch (err) {
-      fail((err as Error).message);
-    }
   }
 
   // Same reason as doctor: the services being down is not a decision the user
@@ -1518,16 +1968,6 @@ async function cmdRoomAgent(cliName: string, argv: string[]): Promise<void> {
 
   const { path, config } = loadConfig();
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-
-  // Peel --account from agent args (rebind already-bound Projects).
-  let accountFlag: string | undefined;
-  try {
-    const pealed = parseProjectFlag(rest);
-    accountFlag = pealed.accountFlag;
-    rest = pealed.rest;
-  } catch (err) {
-    fail((err as Error).message);
-  }
 
   const resolved = await resolveProjectForCli({
     config,
@@ -1873,7 +2313,7 @@ async function main(): Promise<void> {
     // Only peel -p when the first non-flag token is a known agent, "status", or "doctor"
     if (parsed.projectFlag && parsed.rest[0]
       && (isCliAgentCommand(parsed.rest[0])
-        || ["status", "doctor", "network", "folders", "git", "prove", "setup", "dev"]
+        || ["status", "doctor", "network", "folders", "git", "prove", "setup", "dev", "quickstart", "support"]
           .includes(parsed.rest[0]))) {
       projectFlag = parsed.projectFlag;
       rest = parsed.rest;
@@ -1890,8 +2330,17 @@ async function main(): Promise<void> {
     ? ["-p", projectFlag, ...cmdRest]
     : cmdRest;
 
+  // Management commands own their help. Vendor CLI flags still pass through:
+  // `bumper codex --help` must reach Codex, not Bumper.
+  if (cmd && !isCliAgentCommand(cmd) && cmd !== "help"
+    && (cmdRest.includes("--help") || cmdRest.includes("-h"))) {
+    printHelp(cmd);
+    return;
+  }
+
   switch (cmd) {
     case "init": return void (await cmdInit(cmdRest));
+    case "quickstart": return void (await cmdQuickstart(withProject));
     case "doctor": return void (await cmdDoctor(withProject));
     case "contexts": return cmdContexts();
     case "access": return cmdAccess(cmdRest);
@@ -1908,6 +2357,7 @@ async function main(): Promise<void> {
     case "uninstall": return cmdUninstall(cmdRest);
     case "backup": return cmdBackup(cmdRest);
     case "feedback": return void (await cmdFeedback(cmdRest));
+    case "support": return void (await cmdSupport(withProject));
     case "use": return cmdUse(cmdRest[0]);
     case "allow": return cmdAllow("allow", cmdRest[0]);
     case "deny": return cmdAllow("deny", cmdRest[0]);
@@ -1924,16 +2374,28 @@ async function main(): Promise<void> {
     case "run": return void (await cmdRun(process.argv.slice(3)));
     case "log": return cmdLog(cmdRest);
     case undefined:
-    case "help":
     case "-h":
     case "--help":
-      console.log(HELP);
+      printHelp();
+      return;
+    case "help":
+      printHelp(cmdRest[0]);
+      return;
+    case "-V":
+    case "--version":
+      console.log(BUMPER_VERSION);
       return;
     default:
       if (isCliAgentCommand(cmd)) {
         return void (await cmdRoomAgent(cmd, withProject));
       }
-      fail(`Unknown command "${cmd}".\n\n${HELP}`);
+      fail(
+        `Unknown command "${cmd}".\n\n` +
+        "Next:\n" +
+        "  bumper help              # everyday commands\n" +
+        "  bumper help all          # every command\n" +
+        "  bumper status            # current Project state",
+      );
   }
 }
 
