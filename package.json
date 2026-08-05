@@ -1,6 +1,6 @@
 {
   "name": "@crostra/bumper",
-  "version": "0.6.0-rc.1",
+  "version": "0.6.0-rc.2",
   "description": "A macOS Control Plane that runs AI coding CLIs inside the Project boundary you choose.",
   "type": "module",
   "main": "dist/electron.js",
