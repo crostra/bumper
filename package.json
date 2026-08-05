@@ -1,0 +1,118 @@
+{
+  "name": "@crostra/bumper",
+  "version": "0.6.0-rc.1",
+  "description": "A macOS Control Plane that runs AI coding CLIs inside the Project boundary you choose.",
+  "type": "module",
+  "main": "dist/electron.js",
+  "bin": {
+    "bumper": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "assets",
+    "docs",
+    "examples",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "TRADEMARKS.md",
+    "scripts/fix-node-pty.mjs"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/fix-node-pty.mjs",
+    "build": "node scripts/build.mjs",
+    "dev": "tsc --watch",
+    "start": "node dist/cli.js",
+    "app:dev": "npm run build && node scripts/fix-node-pty.mjs && electron .",
+    "app:pack": "node scripts/build-app.mjs",
+    "app:install-local": "node scripts/install-local-app.mjs",
+    "app:dmg": "node scripts/build-dmg.mjs",
+    "app:smoke": "node scripts/smoke-dmg.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc && BUMPER_NO_CONTAINER_AUTOSTART=1 node --test \"test/**/*.test.mjs\"",
+    "prepare": "tsc",
+    "icons": "electron scripts/render-icons.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "proxy",
+    "ai",
+    "governance",
+    "context-isolation",
+    "freelancer"
+  ],
+  "license": "Apache-2.0",
+  "author": "crostra",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/crostra/bumper.git"
+  },
+  "bugs": {
+    "url": "https://github.com/crostra/bumper/issues"
+  },
+  "homepage": "https://github.com/crostra/bumper#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "overrides": {
+    "@hono/node-server": "^2.0.5"
+  },
+  "build": {
+    "appId": "com.crostra.bumper",
+    "productName": "Bumper",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "asar": false,
+    "files": [
+      "dist/**/*",
+      "assets/**/*",
+      "node_modules/**/*",
+      "package.json",
+      "LICENSE",
+      "!node_modules/**/*.map",
+      "!node_modules/**/*.ts",
+      "!node_modules/**/{test,tests,__tests__,example,examples,docs,doc}/**",
+      "!node_modules/**/{CHANGELOG.md,CHANGELOG,README.md,readme.md,.github}",
+      "!node_modules/lucide/dist/esm/**",
+      "!node_modules/lucide/dist/cjs/**"
+    ],
+    "afterSign": "scripts/notarize.mjs",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "dir"
+      ],
+      "icon": "assets/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "dmg": {
+      "title": "Bumper ${version}",
+      "artifactName": "Bumper-${version}-${arch}.${ext}"
+    }
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "lucide": "^0.468.0",
+    "node-pty": "^1.1.0",
+    "ws": "^8.21.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.7.0"
+  }
+}

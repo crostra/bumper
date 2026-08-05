@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bumper terminal</title>
+  <link rel="stylesheet" href="/vendor/xterm.css">
+  <link rel="stylesheet" href="/app.css">
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #111317; color: #e8e9eb; }
+    .term-shell { display: grid; grid-template-columns: minmax(0, 1fr) 280px; height: 100vh; }
+    .term-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .term-bar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid #2a2e36; background: #171a20; }
+    .term-bar b { display: block; font-size: 13px; }
+    .term-bar small { display: block; margin-top: 2px; color: #9aa1ad; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .term-body { flex: 1; min-height: 0; padding: 8px 10px 12px; overflow: hidden; }
+    .term-body .xterm { height: 100%; }
+    .term-help { border-left: 1px solid #2a2e36; background: #151820; padding: 14px 16px; overflow-y: auto; }
+    .term-help h2 { margin: 0 0 8px; font-size: 13px; }
+    .term-help p, .term-help li { color: #b7bdc8; font-size: 12px; line-height: 1.45; }
+    .term-help ul { margin: 8px 0 0; padding-left: 18px; }
+    .term-help .eyebrow { margin: 0 0 6px; color: #7d8696; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+    @media (max-width: 720px) { .term-shell { grid-template-columns: 1fr; } .term-help { display: none; } }
+  </style>
+</head>
+<body>
+  <div class="term-shell">
+    <div class="term-main">
+      <header class="term-bar">
+        <div>
+          <b id="term-title">Bumper terminal</b>
+          <small id="term-meta">Connecting…</small>
+        </div>
+        <span id="term-status" class="status-pill">starting</span>
+      </header>
+      <div id="terminal" class="term-body" aria-label="Session terminal"></div>
+    </div>
+    <aside class="term-help" id="term-help">
+      <p class="eyebrow">Help</p>
+      <h2 id="help-title">Terminal</h2>
+      <div id="help-body"></div>
+    </aside>
+  </div>
+  <script src="/vendor/xterm.js"></script>
+  <script src="/vendor/addon-fit.js"></script>
+  <script src="/terminal.js"></script>
+</body>
+</html>

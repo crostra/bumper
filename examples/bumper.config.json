@@ -1,0 +1,34 @@
+{
+  "webPort": 4319,
+  "defaultContext": "personal",
+  "backends": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/tmp/bumper-demo"
+      ],
+      "description": "Local filesystem demo server"
+    }
+  },
+  "contexts": {
+    "personal": {
+      "description": "Your own stuff — full access.",
+      "backends": [
+        "filesystem"
+      ],
+      "mode": "read-write"
+    },
+    "clientA": {
+      "description": "Client A — read-only, cannot touch anything else.",
+      "backends": [
+        "filesystem"
+      ],
+      "mode": "read-only",
+      "writePaths": [
+        "/Users/example/bumper-demo/sample/"
+      ]
+    }
+  }
+}

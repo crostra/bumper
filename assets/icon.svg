@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    Bumper's mark: two brackets holding one thing.
+
+    What is between the brackets is everything the AI has; there is no outside
+    them. Earlier drafts drew the boundary as an enclosure with a gap, but every
+    one of those read as the letter C — a mark for "Bumper" that looks like
+    someone else's initial is worse than no mark. Brackets carry the same idea
+    without a letterform, and survive the 16px tray size.
+
+    Geometry is shared with trayTemplate.svg and github-app-badge.svg; keep the
+    three in step or the app and its GitHub App stop looking related.
+  -->
+  <rect width="1024" height="1024" rx="224" fill="#17191c"/>
+  <path fill="none" stroke="#ffffff" stroke-width="104" stroke-linecap="round" stroke-linejoin="round"
+    d="M392 300 H316 A64 64 0 0 0 252 364 V660 A64 64 0 0 0 316 724 H392"/>
+  <path fill="none" stroke="#ffffff" stroke-width="104" stroke-linecap="round" stroke-linejoin="round"
+    d="M632 300 H708 A64 64 0 0 1 772 364 V660 A64 64 0 0 1 708 724 H632"/>
+  <circle cx="512" cy="512" r="92" fill="#ffffff"/>
+</svg>

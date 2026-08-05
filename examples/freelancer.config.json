@@ -1,0 +1,47 @@
+{
+  "//": "Freelancer with multiple clients. Switch context per client; the AI can only ever reach the active client's connections, and client work is read-only by default.",
+  "defaultContext": "personal",
+  "backends": {
+    "personal-fs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/personal"],
+      "description": "Your own projects"
+    },
+    "clientA-github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "ghp_clientA_token_here" },
+      "description": "Client A's GitHub (token stays here, never given to the AI client)"
+    },
+    "clientB-db": {
+      "command": "npx",
+      "args": ["-y", "@some/mcp-postgres", "postgres://readonly@clientB/db"],
+      "description": "Client B's database"
+    }
+  },
+  "contexts": {
+    "personal": {
+      "description": "Your own stuff — full access.",
+      "backends": ["personal-fs"],
+      "mode": "read-write"
+    },
+    "clientA": {
+      "description": "Client A only. Cannot see Client B or your personal files.",
+      "backends": ["clientA-github"],
+      "mode": "read-only",
+      "policies": {
+        "clientA-github": { "allow": ["create_issue"], "deny": [] }
+      },
+      "native": { "allow": ["Bash:npm test", "Bash:git status"], "deny": ["Bash:git push"] },
+      "writePaths": ["~/work/acme"],
+      "repos": ["github.com/acme"]
+    },
+    "clientB": {
+      "description": "Client B only. Strictly read-only DB access.",
+      "backends": ["clientB-db"],
+      "mode": "read-only",
+      "writePaths": ["~/work/globex"],
+      "repos": ["github.com/globex"]
+    }
+  }
+}

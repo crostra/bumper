@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Bumper</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <aside class="sidebar">
+      <div class="traffic-space"></div>
+      <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 1024 1024" fill="none"><path stroke="currentColor" stroke-width="104" stroke-linecap="round" stroke-linejoin="round" d="M392 300H316A64 64 0 0 0 252 364V660A64 64 0 0 0 316 724H392"/><path stroke="currentColor" stroke-width="104" stroke-linecap="round" stroke-linejoin="round" d="M632 300H708A64 64 0 0 1 772 364V660A64 64 0 0 1 708 724H632"/><circle cx="512" cy="512" r="92" fill="currentColor"/></svg></span><span>Bumper</span></div>
+      <nav aria-label="Main navigation">
+        <button class="nav-item active" data-route="projects"><i data-lucide="folder-kanban"></i><span data-i18n="nav.projects">Projects</span></button>
+        <button class="nav-item" data-route="events"><i data-lucide="list-tree"></i><span data-i18n="nav.events">Events</span></button>
+        <button class="nav-item" data-route="library"><i data-lucide="library"></i><span data-i18n="nav.library">Library</span></button>
+        <button class="nav-item" data-route="settings"><i data-lucide="settings"></i><span data-i18n="nav.settings">Settings</span></button>
+      </nav>
+      <button id="account-button" class="account-button" type="button"><span class="avatar">L</span><span><b>Local account</b><small>Free · on this Mac</small></span><i data-lucide="chevrons-up-down"></i></button>
+    </aside>
+
+    <main class="main">
+      <!-- hiddenInset: same drag band as sidebar traffic-space so the window moves from the content chrome too -->
+      <div class="titlebar-drag" aria-hidden="true"></div>
+      <div id="fatal-banner" class="fatal-banner hidden"><i data-lucide="triangle-alert"></i><div><b id="fatal-title">Protection unavailable</b><span id="fatal-message"></span><div id="fatal-actions" class="fatal-actions hidden"><code id="fatal-command">brew install --cask container</code><button id="fatal-copy" class="secondary" type="button"><i data-lucide="copy"></i>Copy</button><a id="fatal-link" class="tertiary" href="https://github.com/apple/container" target="_blank" rel="noreferrer"><i data-lucide="external-link"></i>Install guide</a></div></div></div>
+
+      <section id="route-setup" class="view">
+        <header class="page-header"><div><h1 data-i18n="setup.title">Set up Bumper</h1><p class="subtitle" data-i18n="setup.subtitle">Three steps once. Then open a Project and work normally.</p></div></header>
+        <div id="setup-steps" class="setup-steps" aria-label="System setup steps"></div>
+      </section>
+
+      <section id="route-projects" class="view active">
+        <header class="page-header"><div><h1 data-i18n="nav.projects">Projects</h1></div><button id="new-project" class="primary" type="button"><i data-lucide="plus"></i><span data-i18n="ui.new_project">New project</span></button></header>
+        <div class="filter-row projects-toolbar"><input id="project-search" type="search" placeholder="Search projects" aria-label="Search projects" data-i18n-placeholder="ui.search_projects"></div>
+        <div id="project-list" class="project-list"></div>
+      </section>
+
+      <section id="route-project" class="view">
+        <header class="page-header project-page-header">
+          <div>
+            <button type="button" class="back-link" data-go="projects"><i data-lucide="arrow-left"></i><span data-i18n="nav.projects">Projects</span></button>
+            <h1 id="project-page-title">Project</h1>
+            <p class="subtitle" id="project-page-subtitle"></p>
+          </div>
+          <div class="project-header-actions">
+            <button type="button" class="tertiary" id="project-rename"><i data-lucide="pencil"></i><span data-i18n="project.rename">Rename</span></button>
+          </div>
+        </header>
+        <nav class="page-subnav project-subnav" aria-label="Project sections">
+          <button type="button" class="subnav-item active" data-project-section="overview" data-i18n="project.section.overview">Overview</button>
+          <button type="button" class="subnav-item" data-project-section="folders" data-i18n="project.section.folders">Folders</button>
+          <button type="button" class="subnav-item" data-project-section="network" data-i18n="project.section.network">Network</button>
+          <button type="button" class="subnav-item" data-project-section="development" data-i18n="project.section.development">Development</button>
+          <button type="button" class="subnav-item" data-project-section="ai" data-i18n="project.section.ai">AI tools</button>
+          <button type="button" class="subnav-item" data-project-section="git" data-i18n="project.section.git">Git</button>
+          <button type="button" class="subnav-item" data-project-section="connections" data-i18n="project.section.connections">Connections</button>
+        </nav>
+        <div id="project-section-overview" class="project-section active"></div>
+        <div id="project-section-folders" class="project-section"></div>
+        <div id="project-section-network" class="project-section"></div>
+        <div id="project-section-development" class="project-section"></div>
+        <div id="project-section-ai" class="project-section"></div>
+        <div id="project-section-git" class="project-section"></div>
+        <div id="project-section-connections" class="project-section"></div>
+      </section>
+
+      <section id="route-create" class="view">
+        <header class="page-header"><div><h1 data-i18n="create.title">New Project</h1><p class="subtitle" data-i18n="create.subtitle">Folder, name, and how much the AI can do.</p></div><button type="button" class="back-link" data-go="projects"><i data-lucide="arrow-left"></i><span data-i18n="ui.cancel">Cancel</span></button></header>
+        <div class="create-layout">
+          <form id="create-project-form" class="create-wizard panel">
+            <div class="create-step" data-create-step="1">
+              <h2>1 · Choose the folder</h2>
+              <div class="field"><label for="create-folder">Workspace folder</label><div class="input-action"><input id="create-folder" readonly required placeholder="Choose a project folder"><button type="button" id="pick-create-folder" class="icon-button" aria-label="Choose folder"><i data-lucide="folder-open"></i></button></div></div>
+              <div id="create-folder-existing" class="create-existing hidden"></div>
+            </div>
+            <div class="create-step" data-create-step="2">
+              <h2>2 · Name this Project</h2>
+              <div class="field"><label for="create-name">Project name</label><input id="create-name" required maxlength="60" placeholder="My website"></div>
+              <div class="field"><label for="create-description">Description <small>(optional)</small></label><input id="create-description" maxlength="160" placeholder="Short note"></div>
+            </div>
+            <div class="create-step" data-create-step="3">
+              <h2>3 · What the AI can do</h2>
+              <div class="template-cards">
+                <label class="template-card selected"><input type="radio" name="create-template" value="Standard development" checked><span><b>Build normally</b><small>Read + Write files · Network On</small></span></label>
+                <label class="template-card"><input type="radio" name="create-template" value="Offline edit"><span><b>Work offline</b><small>Read + Write files · Network Off</small></span></label>
+                <label class="template-card"><input type="radio" name="create-template" value="Offline review"><span><b>Review safely</b><small>Read only files · Network Off</small></span></label>
+              </div>
+            </div>
+            <div class="create-benefit"><i data-lucide="zap"></i><div><b>Approval prompts start off</b><p>Supported tools can skip per-action approvals inside the Sandbox.</p></div></div>
+            <div class="dialog-actions"><button type="submit" class="primary" id="create-project-submit"><i data-lucide="check"></i>Create Project</button></div>
+          </form>
+          <aside class="create-preview panel" aria-label="Project preview">
+            <div class="preview-heading"><span>Live preview</span><b id="create-preview-title">Your new Project</b></div>
+            <div id="create-boundary-preview"></div>
+            <div class="preview-legend"><span><i data-lucide="folder"></i>Files</span><span><i data-lucide="globe"></i>Network</span><span><i data-lucide="key-round"></i>Credentials</span></div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="route-events" class="view">
+        <header class="page-header">
+          <div>
+            <h1 data-i18n="events.title">Events</h1>
+          </div>
+          <a id="export-events" class="secondary" href="/api/events/export" download="bumper-events.json"><i data-lucide="download"></i><span data-i18n="events.export">Export JSON</span></a>
+        </header>
+        <div class="filter-row events-filters">
+          <select id="events-context" aria-label="Filter by project"></select>
+          <select id="events-source" aria-label="Filter by source">
+            <option value="" data-i18n="events.filter.source">All sources</option>
+            <option value="room" data-i18n="events.filter.source.room">Protected Sandbox</option>
+            <option value="external-mcp" data-i18n="events.filter.source.external">External MCP</option>
+            <option value="app" data-i18n="events.filter.source.app">Bumper app</option>
+          </select>
+          <select id="events-type" aria-label="Filter by type">
+            <option value="" data-i18n="events.filter.type">All types</option>
+            <option value="files" data-i18n="events.filter.type.files">Files</option>
+            <option value="network" data-i18n="events.filter.type.network">Network</option>
+            <option value="git" data-i18n="events.filter.type.git">Git</option>
+            <option value="mcp" data-i18n="events.filter.type.mcp">MCP</option>
+            <option value="system" data-i18n="events.filter.type.system">System</option>
+          </select>
+          <select id="events-decision" aria-label="Filter by decision">
+            <option value="" data-i18n="events.filter.decision">All decisions</option>
+            <option value="allowed" data-i18n="events.filter.decision.allowed">Allowed</option>
+            <option value="blocked" data-i18n="events.filter.decision.blocked">Blocked</option>
+            <option value="failed" data-i18n="events.filter.decision.failed">Failed</option>
+          </select>
+          <select id="events-time" aria-label="Filter by time">
+            <option value="1h" selected data-i18n="events.filter.time.1h">Last hour</option>
+            <option value="24h" data-i18n="events.filter.time.24h">Last 24 hours</option>
+            <option value="7d" data-i18n="events.filter.time.7d">Last 7 days</option>
+            <option value="30d" data-i18n="events.filter.time.30d">Last 30 days</option>
+            <option value="" data-i18n="events.filter.time">Any time</option>
+          </select>
+        </div>
+        <div id="events-list" class="event-list" role="list"></div>
+      </section>
+
+      <section id="route-library" class="view">
+        <header class="page-header"><div><h1 data-i18n="library.title">Library</h1></div></header>
+        <div id="library-content" class="stack library-grid"></div>
+      </section>
+
+      <section id="route-settings" class="view">
+        <header class="page-header">
+          <div>
+            <h1 data-i18n="settings.title">Settings</h1>
+          </div>
+        </header>
+        <nav id="settings-nav" class="page-subnav settings-nav" aria-label="Settings categories"></nav>
+        <div id="settings-content" class="settings-list"></div>
+      </section>
+    </main>
+  </div>
+
+
+  <dialog id="limits-dialog" class="limits-dialog"><div class="dialog-header"><div><p class="eyebrow" data-i18n="ui.honest_limits">Honest limits</p><h2 data-i18n="ui.limits">Limits</h2></div><button type="button" class="icon-button" data-close-dialog aria-label="Close" data-i18n-aria-label="ui.close"><i data-lucide="x"></i></button></div><p class="dialog-banner">The boundary above is real: the Sandbox only includes the folders and connections you shared. These are the edges it deliberately does not claim.</p><div id="limits-list" class="limits-list"></div><div class="dialog-actions"><a class="tertiary" href="https://github.com/crostra/bumper/blob/main/docs/threat-model.md" target="_blank" rel="noreferrer"><i data-lucide="external-link"></i><span data-i18n="ui.threat_model">Threat model</span></a><button type="button" class="secondary" data-close-dialog data-i18n="ui.done">Done</button></div></dialog>
+
+  <dialog id="rename-project-dialog" class="rename-dialog">
+    <form id="rename-project-form">
+      <div class="dialog-header">
+        <div><p class="eyebrow">Project</p><h2 data-i18n="project.rename">Rename</h2></div>
+        <button type="button" class="icon-button" data-close-dialog aria-label="Close"><i data-lucide="x"></i></button>
+      </div>
+      <div class="field">
+        <label for="rename-project-input" data-i18n="project.rename.prompt">New name for this Project</label>
+        <input id="rename-project-input" required maxlength="60" autocomplete="off">
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="tertiary" data-close-dialog>Cancel</button>
+        <button type="submit" class="primary">Rename</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="account-dialog" class="account-dialog"><div class="account-hero"><span class="avatar large">L</span><div><h2>Local account</h2><p>Free plan · Data stays on this Mac</p></div></div><div class="account-row"><i data-lucide="hard-drive"></i><div><b>No sign-in required</b><p>Projects, policies, and evidence are stored locally.</p></div></div><div class="dialog-actions"><button id="close-account" class="secondary" type="button">Done</button></div></dialog>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script src="/vendor/lucide.js"></script><script src="/launch-gate.js"></script><script src="/app.js"></script>
+</body>
+</html>

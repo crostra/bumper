@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 1024 1024">
+  <!--
+    Logo for the GitHub App, uploaded by hand in the App's settings (the App
+    Manifest has no badge field).
+
+    Transparent with a white symbol and no rounded plate: GitHub composites the
+    badge onto its own dark circle, so shipping the Mac icon here would show a
+    black square inside that circle. Same geometry as icon.svg, inset a little
+    so the brackets do not touch the circle's edge.
+  -->
+  <g transform="translate(512 512) scale(0.86) translate(-512 -512)">
+    <path fill="none" stroke="#ffffff" stroke-width="112" stroke-linecap="round" stroke-linejoin="round"
+      d="M392 300 H316 A64 64 0 0 0 252 364 V660 A64 64 0 0 0 316 724 H392"/>
+    <path fill="none" stroke="#ffffff" stroke-width="112" stroke-linecap="round" stroke-linejoin="round"
+      d="M632 300 H708 A64 64 0 0 1 772 364 V660 A64 64 0 0 1 708 724 H632"/>
+    <circle cx="512" cy="512" r="96" fill="#ffffff"/>
+  </g>
+</svg>

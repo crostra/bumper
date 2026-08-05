@@ -1,0 +1,13 @@
+node_modules/
+dist/
+release/
+*.log
+.DS_Store
+# local runtime state / user configs (never commit secrets)
+.bumper/
+bumper.config.json
+!examples/bumper.config.json
+
+# icon rasterisation scratch (scripts/render-icons.mjs cleans these on success)
+assets/.icon.iconset/
+assets/.icon.tmp/

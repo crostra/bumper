@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 1024 1024">
+  <!--
+    macOS menu-bar template image: black on transparent, no plate. The system
+    recolours a *Template asset for light and dark menu bars, so any colour here
+    would be discarded — and a background plate would show as a solid block.
+
+    Same geometry as icon.svg, with slightly heavier strokes: at menu-bar size
+    the thinner version loses the bracket arms.
+  -->
+  <path fill="none" stroke="#000000" stroke-width="116" stroke-linecap="round" stroke-linejoin="round"
+    d="M392 300 H316 A64 64 0 0 0 252 364 V660 A64 64 0 0 0 316 724 H392"/>
+  <path fill="none" stroke="#000000" stroke-width="116" stroke-linecap="round" stroke-linejoin="round"
+    d="M632 300 H708 A64 64 0 0 1 772 364 V660 A64 64 0 0 1 708 724 H632"/>
+  <circle cx="512" cy="512" r="98" fill="#000000"/>
+</svg>
